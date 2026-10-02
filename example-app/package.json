@@ -1,0 +1,17 @@
+{
+  "name": "openrails-example-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "demo": "node server.mjs",
+    "start": "node server.mjs",
+    "check": "node --check server.mjs && node --check client.js"
+  },
+  "dependencies": {
+    "@openrails/sdk": "../openrails-sdk"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
