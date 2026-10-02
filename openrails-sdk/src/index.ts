@@ -1,0 +1,16 @@
+export { configure, type ClientOptions } from './ambient.js';
+export { agents } from './agents.js';
+export { ctx } from './ctx.js';
+export { db, Collection, DbQuery, type FrozenScope } from './db.js';
+export { appUsers } from './directory.js';
+export { email } from './email.js';
+export { files, type FileData } from './files.js';
+export { ApiError } from './http.js';
+export { llm, llmProviders } from './llm.js';
+export { errorFrame, toNdjson, type NdjsonErrorFrame, type NdjsonOptions } from './ndjson.js';
+export { query, savedQueries } from './queries.js';
+export { secrets } from './secrets.js';
+export { connector, serviceConnectorDocs, serviceConnectors } from './service-connectors.js';
+export { data, dataConnectors } from './sql.js';
+export { LlmRunError } from './tool-loop.js';
+export type * from './types.js';
