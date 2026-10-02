@@ -1,0 +1,8 @@
+.git
+target
+.railcode
+.env
+.env.*
+config.json
+@railcode
+node_modules

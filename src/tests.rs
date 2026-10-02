@@ -70,6 +70,34 @@ async fn authentication_and_persistent_kv() {
     assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(denied.headers()["www-authenticate"], "Bearer");
     assert!(json_body(denied).await["detail"].is_string());
+    assert_eq!(
+        request(
+            &routes,
+            "PUT",
+            "/fn/data/files/blob?name=too-big",
+            &"x".repeat(MAX_BODY + 1),
+            true
+        )
+        .await
+        .status(),
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+    assert_eq!(
+        request(
+            &routes,
+            "POST",
+            "/fn/data/llm/generate",
+            r#"{"input":"hello"}"#,
+            true
+        )
+        .await
+        .status(),
+        StatusCode::NOT_IMPLEMENTED
+    );
+    assert_eq!(
+        json_body(request(&routes, "GET", "/fn/data/llm/providers", "", true).await).await,
+        json!([])
+    );
     let saved = request(
         &routes,
         "PUT",
