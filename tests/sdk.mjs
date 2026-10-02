@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, writeFile, readdir, readFile } from 'node:fs/promises';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { createServer as createSocketServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -224,6 +224,102 @@ try {
   assert.equal((await tasks.get('after-sql')).score, 4);
   assert.equal(secrets.OPENRAILS_TOKEN, token);
   assert.equal((await fetch(`${url}/fn/data/files`)).status, 401);
+  if (process.argv.includes('--demo')) {
+    const demo = spawn(process.execPath, [join(root, 'demo/server.mjs')], {
+      env: { ...process.env, OPENRAILS_URL: url, OPENRAILS_TOKEN: token, DEMO_PORT: '0' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let demoLogs = '';
+    demo.stdout.on('data', chunk => { demoLogs += chunk; });
+    demo.stderr.on('data', chunk => { demoLogs += chunk; });
+    try {
+      let demoUrl;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (demo.exitCode !== null) throw new Error(demoLogs);
+        demoUrl = demoLogs.match(/OpenRails demo: (http:\/\/127\.0\.0\.1:\d+)/)?.[1];
+        if (demoUrl) break;
+        await delay(30);
+      }
+      assert(demoUrl, demoLogs);
+      const action = async (op, input = {}, expected = 200) => {
+        const response = await fetch(`${demoUrl}/api`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op, ...input }) });
+        assert.equal(response.status, expected, await response.clone().text());
+        return response.headers.get('content-type').includes('ndjson') ? (await response.text()).trim().split('\n').map(line => JSON.parse(line)) : response.json();
+      };
+      const page = await (await fetch(demoUrl)).text();
+      assert(page.includes('Local LLM') && page.includes('Reserved agent APIs'));
+      assert((await fetch(`${demoUrl}/client.js`)).ok);
+      const state = await action('context');
+      assert.equal(state.ctx.user, null);
+      assert(!JSON.stringify(state).includes(token));
+      assert.equal((await action('users'))[0].id, 'user-1');
+      assert.equal((await action('kv.seed')).length, 3);
+      assert.equal((await action('kv.get')).score, 1);
+      await action('kv.put', { key: 'extra', value: '{"score":9,"title":"<script>never execute</script>"}' });
+      assert.equal((await action('kv.list')).length, 4);
+      assert.equal((await action('kv.page', { field: 'score', operator: 'gte', match: '2', order: 'score', direction: 'desc', page: 1, size: 1 }))[0].key, 'extra');
+      assert.equal((await action('kv.first', { field: 'score', operator: 'eq', match: '9' })).key, 'extra');
+      assert.equal(await action('kv.count', { since: '2000-01-01T00:00:00Z' }), 4);
+      assert.equal(await action('kv.count', { before: '2000-01-01T00:00:00Z' }), 0);
+      assert.equal((await action('kv.where', { field: 'score', operator: 'in', match: '[1,2]' })).length, 2);
+      assert.equal((await action('kv.prefix', { prefix: 'sample-' })).length, 3);
+      await action('kv.delete', { key: 'extra' });
+      assert.equal(await action('kv.get', { key: 'extra' }), null);
+      for (const kind of ['user', 'role']) { assert.deepEqual(await action('scope.list', { kind }), []); assert.equal(await action('scope.get', { kind }), null); }
+      assert.equal((await action('files.put', { text: 'demo file' })).size, 9);
+      assert.equal((await action('files.get')).preview, 'demo file');
+      assert.equal((await action('files.list')).length, 1);
+      const link = await action('files.url'); assert.equal(await (await fetch(link.url)).text(), 'demo file');
+      assert.deepEqual((await action('files.urls')).missing, ['demo/missing.txt']);
+      assert.equal(await (await fetch(`${demoUrl}/download?name=hello.txt`)).text(), 'demo file');
+      await action('files.streamPut', { name: 'stream.txt', text: 'stream body' });
+      assert.equal((await action('files.get', { name: 'stream.txt' })).preview, 'stream body');
+      const uploaded = await fetch(`${demoUrl}/upload?name=binary.dat`, { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: new Uint8Array([0, 255, 1]) });
+      assert.equal(uploaded.status, 200);
+      assert.deepEqual(new Uint8Array(await (await fetch(`${demoUrl}/download?name=binary.dat`)).arrayBuffer()), new Uint8Array([0, 255, 1]));
+      await action('files.put', { name: 'large.txt', text: 'x'.repeat(5000) });
+      const preview = await action('files.get', { name: 'large.txt' }); assert.equal(preview.preview.length, 4096); assert.equal(preview.truncated, true);
+      await action('files.delete'); assert.equal(await action('files.get'), null);
+      const sql = await action('sql', { sql: 'SELECT key FROM kv WHERE collection=$1', params: '["demo_tasks"]' }); assert.equal(sql.rowcount, 3); assert.deepEqual(sql.columns, ['key']);
+      assert.equal((await action('sql.connection', { sql: 'SELECT 42 AS answer', params: '[]' })).rows[0].answer, 42);
+      assert.equal((await action('dataConnectors'))[0].engine, 'sqlite');
+      assert.equal((await action('savedQueries'))[0].name, 'task');
+      assert.equal((await action('query', { name: 'task', params: '{"key":"1"}' })).rows[0].title, 'demo');
+      await action('sql', { sql: 'DELETE FROM kv', params: '[]' }, 400);
+      assert.equal((await action('llm.providers'))[0].provider, 'openai');
+      assert.equal((await action('llm.generate')).text, 'Hello from the model');
+      assert.equal((await action('llm.messages')).text, 'Hello from the model');
+      assert.equal((await action('llm.json')).output.answer, 42);
+      for (const op of ['llm.stream', 'llm.streamRaw']) assert.equal((await action(op)).at(-1).type, 'done');
+      assert.equal((await action('llm.definitions')).toolCalls[0].name, 'double');
+      assert.equal((await action('llm.tools')).steps[0].result, 4);
+      assert((await action('llm.toolStream')).some(frame => frame.type === 'step' && frame.step.status === 'ok'));
+      assert.equal((await action('email.send', { to: 'test@example.com', replyTo: 'reply@example.com' })).status, 'accepted');
+      assert.equal((await action('connectors'))[0].name, 'mock');
+      assert.equal((await action('connector.docs', { name: 'mock' })).kind, 'http');
+      assert.equal((await action('connector.fetch', { name: 'mock', path: '/demo' })).status, 200);
+      assert.equal((await action('connector.json', { name: 'mock', path: '/demo' })).path, '/demo');
+      assert.deepEqual(await action('connector.tools', { name: 'mock' }), []);
+      for (const op of ['connector.call', 'agents.start', 'agents.get']) await action(op, { name: 'mock' }, 501);
+      assert.equal((await action('errorFrame')).frame.error, 'provider_error');
+      assert.equal((await action('ndjson', { fail: 'yes' })).at(-1).type, 'error');
+      assert.equal((await action('ndjson')).length, 2);
+      await action('__proto__', {}, 404);
+      await action('kv.put', { value: '{bad' }, 400);
+      await action('llm.generate', { tokens: -1 }, 400);
+      assert.equal((await fetch(`${demoUrl}/api`, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://evil.example' }, body: '{"op":"kv.seed"}' })).status, 403);
+      assert.equal((await fetch(`${demoUrl}/api`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: '{"op":"kv.seed"}' })).status, 415);
+      const deniedHost = await new Promise((resolve, reject) => {
+        const request = httpRequest(demoUrl, { headers: { host: 'evil.example' } }, response => { response.resume(); resolve(response.statusCode); });
+        request.on('error', reject); request.end();
+      });
+      assert.equal(deniedHost, 403);
+      console.log('Browser demo HTTP check passed: SDK actions, streaming, uploads, scoped APIs, reserved errors and local-only guards.');
+    } finally {
+      const exited = once(demo, 'exit');
+      if (demo.exitCode === null) { demo.kill('SIGTERM'); await exited; }
+    }
+  }
   if (multi) {
     const isolated = db.collection('isolation');
     await isolated.put('same', { project: 'main' });

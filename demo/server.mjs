@@ -18,6 +18,7 @@ const tasks = db.collection('demo_tasks');
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const text = (value, fallback = '') => value === undefined || value === '' ? fallback : typeof value === 'string' ? value : fail(400, 'Expected a string');
 const number = (value, fallback) => {
+  if (value !== undefined && typeof value !== 'string' && typeof value !== 'number') fail(400, 'Expected a number');
   const result = value === undefined || value === '' ? fallback : Number(value);
   return Number.isFinite(result) ? result : fail(400, 'Expected a finite number');
 };
@@ -73,9 +74,12 @@ const actions = {
   'files.get': async p => {
     const response = await files.get(filename(p.name));
     if (!response) return null;
-    // ponytail: previews buffer the server's 16 MiB upload ceiling; stream a capped preview if that ceiling grows.
-    const bytes = Buffer.from(await response.arrayBuffer());
-    return { size: bytes.length, contentType: response.headers.get('content-type'), preview: bytes.subarray(0, 4096).toString('utf8'), truncated: bytes.length > 4096 };
+    const reader = response.body.getReader(); const chunks = []; let received = 0;
+    try {
+      while (received <= 4096) { const { value, done } = await reader.read(); if (done) break; chunks.push(Buffer.from(value)); received += value.length; }
+    } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+    const bytes = Buffer.concat(chunks).subarray(0, 4096);
+    return { size: Number(response.headers.get('content-length')), contentType: response.headers.get('content-type'), preview: bytes.toString('utf8'), truncated: received > 4096 };
   },
   'files.url': p => files.url(filename(p.name)),
   'files.urls': p => files.urls(text(p.names, 'hello.txt,missing.txt').split(',').map(name => filename(name.trim()))),
@@ -139,7 +143,7 @@ const server = createServer(async (req, res) => {
     } else if (req.method === 'GET' && url.pathname === '/download') {
       const response = await files.get(filename(url.searchParams.get('name') || 'hello.txt'));
       if (!response) fail(404, 'File not found');
-      response.headers.set('content-disposition', 'attachment');
+      res.setHeader('content-disposition', 'attachment');
       await sendResponse(res, response);
     } else if (req.method === 'POST' && url.pathname === '/upload') {
       const bytes = await body(req, 16 * 1024 * 1024);

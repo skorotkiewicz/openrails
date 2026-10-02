@@ -40,7 +40,7 @@ for (const card of document.querySelectorAll('.card')) {
         status.textContent = failed ? 'Stream reported an error.' : 'Done (NDJSON frames).'; status.className = failed ? 'status error' : 'status';
       } else {
         const value = await response.json(); output.textContent = JSON.stringify(value, null, 2);
-        for (const item of [value, ...(value?.items || [])]) if (item?.url) {
+        for (const item of [value, ...(Array.isArray(value?.items) ? value.items : [])]) if (item?.url) {
           const url = new URL(item.url); if (!['http:', 'https:'].includes(url.protocol)) continue;
           const a = document.createElement('a'); a.href = url.href; a.textContent = 'Open signed download'; a.className = 'download'; a.target = '_blank'; a.rel = 'noopener noreferrer'; links.append(a);
         }
