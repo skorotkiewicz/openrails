@@ -114,7 +114,7 @@ const actions = {
 async function body(req, limit) {
   const chunks = [];
   let size = 0;
-  for await (const chunk of req) { size += chunk.length; if (size > limit) fail(413, 'Request body exceeds the demo limit'); chunks.push(chunk); }
+  for await (const chunk of req.iterator({ destroyOnReturn: false })) { size += chunk.length; if (size > limit) { req.resume(); fail(413, 'Request body exceeds the demo limit'); } chunks.push(chunk); }
   return Buffer.concat(chunks);
 }
 function sendJson(res, status, value) {

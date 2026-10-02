@@ -248,6 +248,7 @@ try {
       };
       const page = await (await fetch(demoUrl)).text();
       assert(page.includes('Local LLM') && page.includes('Reserved agent APIs'));
+      assert(page.includes('type="module" src="/client.js"'));
       assert((await fetch(`${demoUrl}/client.js`)).ok);
       const state = await action('context');
       assert.equal(state.ctx.user, null);
@@ -309,6 +310,7 @@ try {
       await action('llm.generate', { tokens: -1 }, 400);
       assert.equal((await fetch(`${demoUrl}/api`, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://evil.example' }, body: '{"op":"kv.seed"}' })).status, 403);
       assert.equal((await fetch(`${demoUrl}/api`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: '{"op":"kv.seed"}' })).status, 415);
+      assert.equal((await fetch(`${demoUrl}/api`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: 'x'.repeat(1024 * 1024 + 1) })).status, 413);
       const deniedHost = await new Promise((resolve, reject) => {
         const request = httpRequest(demoUrl, { headers: { host: 'evil.example' } }, response => { response.resume(); resolve(response.statusCode); });
         request.on('error', reject); request.end();
