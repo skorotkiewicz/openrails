@@ -26,9 +26,13 @@ pub fn initialize_files(
     builder.mode(0o700);
     builder.create(directory)?;
     #[cfg(unix)]
-    if let Some(parent) = directory.parent().filter(|p| !p.as_os_str().is_empty()) {
-        File::open(parent)?.sync_all()?;
-    }
+    File::open(
+        directory
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| FilePath::new(".")),
+    )?
+    .sync_all()?;
     let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let columns = {
         let mut statement = tx.prepare("PRAGMA table_info(files)")?;

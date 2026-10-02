@@ -123,9 +123,10 @@ try {
   const downloaded = await files.get(meta.name);
   assert.equal(downloaded.headers.get('content-length'), '9');
   assert.equal(await downloaded.text(), 'file body');
-  const columns = await data.runSQL("SELECT name FROM pragma_table_info('files')");
-  assert(!columns.some(column => column.name === 'data'));
-  assert(columns.some(column => column.name === 'size'));
+  const metadataRows = await data.runSQL('SELECT name, size, storage_key FROM files');
+  assert.equal(metadataRows[0].size, 9);
+  assert.equal(metadataRows[0].storage_key + '.blob', stored[0]);
+  await assert.rejects(data.runSQL('SELECT data FROM files'), error => error.status === 400);
   assert.equal(await files.get('missing'), null);
   assert.equal((await files.list()).length, 1);
   const batch = await files.urls([meta.name, 'missing']);
