@@ -13,6 +13,9 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const dir = await mkdtemp(join(tmpdir(), 'openrails-sdk-'));
 const token = 'sdk-test-token-with-at-least-32-characters';
+const otherToken = 'other-project-key-with-at-least-32-characters';
+const multi = process.argv.includes('--projects');
+const storageDir = multi ? join(dir, 'projects', 'main') : dir;
 const providerRequests = [];
 const mock = createServer(async (req, res) => {
   try {
@@ -58,13 +61,22 @@ mock.listen(0, '127.0.0.1');
 await once(mock, 'listening');
 const provider = `http://127.0.0.1:${mock.address().port}`;
 const configPath = join(dir, 'config.json');
-await writeFile(configPath, JSON.stringify({
+const appConfig = {
   users: [{ uuid: 'user-1', name: 'Owner', email: 'owner@example.com', is_admin: true }],
   queries: { task: { sql: "SELECT json_extract(value, '$.title') AS title FROM kv WHERE scope='' AND collection='sql_tasks' AND key=$1", params: [{ name: 'key', type: 'string' }], description: 'One task' } },
   llm: { base_url: `${provider}/v1`, api_key_env: 'MOCK_LLM_KEY', model: 'mock-model' },
   email: { url: `${provider}/emails`, from: 'sender@example.com', api_key_env: 'MOCK_EMAIL_KEY' },
   service_connectors: { mock: { base_url: provider, allowed_methods: ['GET', 'POST'], bearer_token_env: 'MOCK_CONNECTOR_KEY', usage_instructions: 'Local test' } },
-}));
+};
+await writeFile(configPath, JSON.stringify(multi ? {
+  projects: {
+    main: { api_key_env: 'MOCK_PROJECT_KEY', config: appConfig },
+    other: { api_key_env: 'MOCK_OTHER_KEY', config: {
+      users: [{ uuid: 'other-owner', name: 'Other Owner', email: 'other@example.com', is_admin: false }],
+      queries: { only_other: { sql: "SELECT 'other' AS project" } },
+    } },
+  },
+} : appConfig));
 // The backend cannot report an ephemeral port to the SDK before startup.
 const socket = createSocketServer();
 socket.listen(0, '127.0.0.1');
@@ -74,8 +86,9 @@ await new Promise(resolve => socket.close(resolve));
 const url = `http://127.0.0.1:${port}`;
 process.env.OPENRAILS_TOKEN = token;
 process.env.OPENRAILS_URL = url;
+const serverEnv = { ...process.env, OPENRAILS_TOKEN: multi ? 'unused-global-token-with-at-least-32-characters' : token, MOCK_PROJECT_KEY: token, MOCK_OTHER_KEY: otherToken, OPENRAILS_PROJECTS_DIR: join(dir, 'projects'), OPENRAILS_FILES_DIR: join(storageDir, 'files'), OPENRAILS_BIND: `127.0.0.1:${port}`, OPENRAILS_PUBLIC_URL: url, OPENRAILS_DB_PATH: join(dir, 'backend.sqlite3'), OPENRAILS_CONFIG: configPath, MOCK_LLM_KEY: 'mock-llm-key', MOCK_EMAIL_KEY: 'mock-email-key', MOCK_CONNECTOR_KEY: 'mock-connector-key' };
 const server = spawn(join(root, 'target/debug/openrails-backend'), [], {
-  env: { ...process.env, OPENRAILS_TOKEN: token, OPENRAILS_BIND: `127.0.0.1:${port}`, OPENRAILS_PUBLIC_URL: url, OPENRAILS_DB_PATH: join(dir, 'backend.sqlite3'), OPENRAILS_CONFIG: configPath, MOCK_LLM_KEY: 'mock-llm-key', MOCK_EMAIL_KEY: 'mock-email-key', MOCK_CONNECTOR_KEY: 'mock-connector-key' },
+  env: serverEnv,
   stdio: ['ignore', 'ignore', 'pipe'],
 });
 let logs = '';
@@ -116,10 +129,10 @@ try {
   const meta = await files.put('nested/hello ✓.txt', 'file body');
   assert.equal(meta.size, 9);
   assert(meta.content_type.startsWith('text/plain'));
-  const stored = await readdir(join(dir, 'files'));
+  const stored = await readdir(join(storageDir, 'files'));
   assert.equal(stored.length, 1);
   assert.match(stored[0], /^[0-9a-f]{64}\.blob$/);
-  assert.equal(await readFile(join(dir, 'files', stored[0]), 'utf8'), 'file body');
+  assert.equal(await readFile(join(storageDir, 'files', stored[0]), 'utf8'), 'file body');
   const downloaded = await files.get(meta.name);
   assert.equal(downloaded.headers.get('content-length'), '9');
   assert.equal(await downloaded.text(), 'file body');
@@ -139,7 +152,7 @@ try {
   assert.equal((await fetch(tampered)).status, 403);
   await files.delete(meta.name);
   assert.equal(await files.get(meta.name), null);
-  assert.deepEqual(await readdir(join(dir, 'files')), []);
+  assert.deepEqual(await readdir(join(storageDir, 'files')), []);
   const binary = new Uint8Array([0, 255, 128, 1]);
   await files.put('binary.dat', binary);
   assert.deepEqual(new Uint8Array(await (await files.get('binary.dat')).arrayBuffer()), binary);
@@ -211,7 +224,87 @@ try {
   assert.equal((await tasks.get('after-sql')).score, 4);
   assert.equal(secrets.OPENRAILS_TOKEN, token);
   assert.equal((await fetch(`${url}/fn/data/files`)).status, 401);
-  console.log('SDK smoke test passed: persistence APIs, SQL, LLM/tool loop/NDJSON, email, connectors, authentication.');
+  if (multi) {
+    const isolated = db.collection('isolation');
+    await isolated.put('same', { project: 'main' });
+    await files.put('same.txt', 'main file');
+    const mainLink = await files.url('same.txt');
+    assert.equal(new URL(mainLink.url).searchParams.get('project'), 'main');
+    assert.equal(await (await fetch(mainLink.url)).text(), 'main file');
+    const unauthorized = await fetch(`${url}/fn/data/files`, { headers: { authorization: 'Bearer unused-global-token-with-at-least-32-characters' } });
+    assert.equal(unauthorized.status, 401);
+    configure({ url, token: otherToken });
+    assert.equal(await isolated.get('same'), null);
+    assert.equal(await files.get('same.txt'), null);
+    assert.equal((await files.list()).length, 0);
+    assert.equal((await appUsers())[0].id, 'other-owner');
+    assert.deepEqual((await savedQueries()).map(item => item.name), ['only_other']);
+    assert.equal((await query('only_other'))[0].project, 'other');
+    await assert.rejects(query('task', { key: 'task-1' }), error => error.status === 404);
+    assert.deepEqual(await llmProviders(), []);
+    const before = providerRequests.length;
+    await assert.rejects(llm.generate('Must not use the main model'), error => error.status === 501);
+    await assert.rejects(email.send({ to: 'test@example.com', subject: 'Isolated', text: 'test' }), error => error.status === 501);
+    await assert.rejects(connector('mock').fetch('/test'), error => error.status === 404);
+    assert.equal(providerRequests.length, before);
+    await isolated.put('same', { project: 'other' });
+    await files.put('same.txt', 'other file');
+    assert.equal(await (await files.get('same.txt')).text(), 'other file');
+    const rows = await data.runSQL("SELECT json_extract(value, '$.project') AS project FROM kv WHERE collection='isolation'");
+    assert.deepEqual(rows.map(row => row.project), ['other']);
+    await assert.rejects(data.runSQL(`ATTACH DATABASE '${join(storageDir, 'backend.sqlite3')}' AS other`), error => error.status === 400);
+    const otherLink = await files.url('same.txt');
+    assert.equal(await (await fetch(otherLink.url)).text(), 'other file');
+    const changed = new URL(mainLink.url);
+    changed.searchParams.set('project', 'other');
+    assert.equal((await fetch(changed)).status, 403);
+    changed.searchParams.delete('project');
+    assert.equal((await fetch(changed)).status, 403);
+    changed.searchParams.set('project', 'missing');
+    assert.equal((await fetch(changed)).status, 403);
+    configure({ url, token });
+    assert.equal((await isolated.get('same')).project, 'main');
+    assert.equal(await (await files.get('same.txt')).text(), 'main file');
+    // A project query parameter cannot override the key-selected project.
+    const attemptedOverride = await fetch(`${url}/fn/data/kv/isolation/same?project=other`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal((await attemptedOverride.json()).value.project, 'main');
+    const invalidHeaders = [undefined, `Bearer ${otherToken}x`, 'Basic nope', 'Bearer short'];
+    for (const authorization of invalidHeaders) {
+      assert.equal((await fetch(`${url}/fn/data/app-users`, { headers: authorization ? { authorization } : {} })).status, 401);
+    }
+    // Concurrent requests keep their own authenticated App, not a global selected project.
+    const concurrent = await Promise.all(Array.from({ length: 20 }, async (_, i) => {
+      const key = i % 2 ? token : otherToken;
+      return await (await fetch(`${url}/fn/data/kv/isolation/same`, { headers: { authorization: `Bearer ${key}` } })).json();
+    }));
+    concurrent.forEach((item, i) => assert.equal(item.value.project, i % 2 ? 'main' : 'other'));
+    const minimal = { main: { api_key_env: 'MOCK_PROJECT_KEY' } };
+    const invalidConfigs = [
+      [{ projects: {} }, {}, /Configure at least one project/],
+      [{ projects: { ...minimal, other: { api_key_env: 'MOCK_OTHER_KEY' } } }, { MOCK_OTHER_KEY: token }, /distinct API key/],
+      [{ projects: { '../escape': minimal.main } }, {}, /Project IDs/],
+      [{ projects: { main: { api_key_env: 'MISSING_PROJECT_KEY' } } }, { MISSING_PROJECT_KEY: undefined }, /Set MISSING_PROJECT_KEY/],
+      [{ projects: minimal }, { MOCK_PROJECT_KEY: 'short' }, /API keys/],
+      [{ projects: minimal, users: [] }, {}, /unknown field.*users/],
+      [{ projects: { main: { ...minimal.main, config: { llm: { base_url: provider, model: 'mock', api_key_env: 'MISSING_MODEL_KEY' } } } } }, { MISSING_MODEL_KEY: undefined }, /Provider credential/],
+    ];
+    for (const [configuration, environment, expected] of invalidConfigs) {
+      const rejectedDir = await mkdtemp(join(tmpdir(), 'openrails-invalid-project-'));
+      const rejectedConfig = join(rejectedDir, 'config.json');
+      await writeFile(rejectedConfig, JSON.stringify(configuration));
+      const rejected = spawn(join(root, 'target/debug/openrails-backend'), [], {
+        env: { ...serverEnv, ...environment, OPENRAILS_CONFIG: rejectedConfig, OPENRAILS_BIND: '127.0.0.1:0', OPENRAILS_DB_PATH: join(rejectedDir, 'backend.sqlite3'), OPENRAILS_PROJECTS_DIR: join(rejectedDir, 'projects') },
+        stdio: ['ignore', 'ignore', 'pipe'], timeout: 5000,
+      });
+      let error = '';
+      rejected.stderr.on('data', chunk => { error += chunk; });
+      const [code] = await once(rejected, 'exit');
+      assert.equal(code, 1, error);
+      assert.match(error, expected);
+      assert.deepEqual(await readdir(rejectedDir), ['config.json']);
+    }
+  }
+  console.log(`SDK smoke test passed (${multi ? 'multiple projects' : 'single project'}): persistence APIs, SQL, LLM/tool loop/NDJSON, email, connectors, authentication${multi ? ', project isolation' : ''}.`);
 } finally {
   const exited = once(server, 'exit');
   if (server.exitCode === null) { server.kill('SIGTERM'); await exited; }

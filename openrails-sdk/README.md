@@ -35,12 +35,14 @@ console.log(task, pending, download.url, rows.columns);
 
 Alternatively, set `OPENRAILS_URL` and `OPENRAILS_TOKEN`; configuration is loaded lazily on the first request. `configure()` validates the URL and can replace the current connection. This package targets Node 20+ and Bun. Keep the service token on trusted servers, never in a frontend bundle.
 
+For a multi-project OpenRails server, use your project's API key as `token`; the URL and APIs are unchanged. The server isolates each project's database, files, roster, queries and integrations. `configure()` is process-global: configure each app once at startup, not per concurrent request. For concurrent access to different projects from one client process, use direct HTTP requests with explicit per-request bearer keys.
+
 ## API
 
 - `db`: typed collections, filtering, ordering, pagination and read-only imported scopes.
 - `files`: metadata, binary uploads, streamed downloads, listing, deletion and signed URL batches. The server keeps metadata in SQLite and contents in its file directory. ReadableStream uploads work with Node's required duplex option.
 - `data`, `query`, `savedQueries`, `dataConnectors`: read-only SQL on OpenRails' own SQLite database. No external database provider namespaces.
-- `appUsers`: the configured roster, not a user authentication system.
+- `appUsers`: your project's static configured roster, useful for assignee lists or notification recipients, not a user authentication system. `is_admin` does not grant server permissions.
 - `llm`, `llmProviders`: optional model integration, structured output, NDJSON and executable tool loops. Server-side streaming currently buffers one completion.
 - `email` and HTTP `connector`: opt-in integrations; the core server does not require them.
 - `ApiError`, `errorFrame`, `toNdjson`: structured errors and streaming response helpers.

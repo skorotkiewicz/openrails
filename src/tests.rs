@@ -17,6 +17,7 @@ fn app(path: &str) -> Arc<App> {
         path,
         &files_dir,
         Config::default(),
+        None,
     )
     .unwrap()
 }
@@ -683,5 +684,44 @@ async fn downloads_reject_unsafe_storage_keys_and_symlinks() {
             .await
             .status(),
         StatusCode::INTERNAL_SERVER_ERROR
+    );
+}
+
+#[test]
+fn project_identifiers_keys_and_signatures_are_safe() {
+    for id in ["shop", "crm", "test_1", "project-2"] {
+        validate_project_id(id).unwrap();
+    }
+    for id in [
+        "",
+        "..",
+        "../shop",
+        "shop/crm",
+        "SHOP",
+        "shop\\crm",
+        "é",
+        "shop ",
+        &"a".repeat(65),
+    ] {
+        assert!(validate_project_id(id).is_err(), "{id:?}");
+    }
+    for key in [
+        "short".to_owned(),
+        "a".repeat(31),
+        format!("{} ", "a".repeat(32)),
+        format!("{}\x7f", "a".repeat(32)),
+        "é".repeat(32),
+    ] {
+        assert!(validate_token(&key).is_err());
+    }
+    validate_token(TOKEN).unwrap();
+    let mut shop = app(":memory:");
+    let mut crm = app(":memory:");
+    Arc::get_mut(&mut shop).unwrap().project_id = Some("shop".into());
+    Arc::get_mut(&mut crm).unwrap().project_id = Some("crm".into());
+    // IDs are bound into signatures even if a key is later reused for a different project.
+    assert_ne!(
+        shop.signature("same.txt", 123),
+        crm.signature("same.txt", 123)
     );
 }

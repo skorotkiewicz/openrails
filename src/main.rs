@@ -4,7 +4,7 @@ mod storage;
 use axum::{
     Router,
     body::{Bytes, to_bytes},
-    extract::{Path, Query, State, rejection::QueryRejection},
+    extract::{Extension, Path, Query, State, rejection::QueryRejection},
     http::{HeaderMap, Method, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -16,7 +16,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::Sha256;
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap, HashSet},
     env,
     path::{Path as FilePath, PathBuf},
     sync::{Arc, Mutex},
@@ -92,6 +92,102 @@ struct Config {
     email: Option<providers::EmailConfig>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MultiConfig {
+    projects: BTreeMap<String, ProjectConfig>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectConfig {
+    api_key_env: String,
+    #[serde(default)]
+    config: Config,
+}
+
+fn validate_project_id(id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if id.is_empty()
+        || id.len() > 64
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+    {
+        return Err(
+            "Project IDs must be 1..64 lowercase ASCII letters, digits, underscores or hyphens"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_token(token: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if token.len() < 32 || !token.bytes().all(|b| b.is_ascii_graphic()) {
+        return Err(
+            "API keys must contain at least 32 printable ASCII characters without whitespace"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+#[derive(Clone)]
+struct Server {
+    projects: Arc<Vec<Arc<App>>>,
+}
+
+impl From<Arc<App>> for Server {
+    fn from(app: Arc<App>) -> Self {
+        Self {
+            projects: Arc::new(vec![app]),
+        }
+    }
+}
+
+impl Server {
+    fn open_projects(
+        config: MultiConfig,
+        public_url: reqwest::Url,
+        root: &FilePath,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        if config.projects.is_empty() {
+            return Err("Configure at least one project".into());
+        }
+        let mut keys = HashSet::new();
+        let mut resolved = Vec::new();
+        // Validate all IDs, credentials and integrations before opening any project databases.
+        for (id, project) in config.projects {
+            validate_project_id(&id)?;
+            let token = env::var(&project.api_key_env)
+                .map_err(|_| format!("Set {} for project {id}", project.api_key_env))?;
+            validate_token(&token)?;
+            if !keys.insert(token.clone()) {
+                return Err("Each project must have a distinct API key".into());
+            }
+            project.config.validate()?;
+            resolved.push((id, token, project.config));
+        }
+        let mut projects = Vec::new();
+        for (id, token, config) in resolved {
+            let directory = root.join(&id);
+            let db_path = directory.join("backend.sqlite3");
+            projects.push(App::open(
+                token,
+                public_url.clone(),
+                db_path
+                    .to_str()
+                    .ok_or("Project database path must be UTF-8")?,
+                &directory.join("files"),
+                config,
+                Some(id),
+            )?);
+        }
+        Ok(Self {
+            projects: Arc::new(projects),
+        })
+    }
+}
+
 #[derive(Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 struct User {
@@ -102,6 +198,7 @@ struct User {
 }
 
 struct App {
+    project_id: Option<String>,
     token: String,
     public_url: reqwest::Url,
     // ponytail: one SQLite lock per app; use a pool if concurrent writes become a bottleneck.
@@ -118,13 +215,9 @@ impl App {
         db_path: &str,
         files_dir: &FilePath,
         config: Config,
+        project_id: Option<String>,
     ) -> Result<Arc<Self>, Box<dyn std::error::Error>> {
-        if token.len() < 32 || !token.is_ascii() || token.chars().any(char::is_whitespace) {
-            return Err(
-                "OPENRAILS_TOKEN must contain at least 32 ASCII characters without whitespace"
-                    .into(),
-            );
-        }
+        validate_token(&token)?;
         if !matches!(public_url.scheme(), "http" | "https")
             || public_url.host_str().is_none()
             || !public_url.username().is_empty()
@@ -160,6 +253,7 @@ impl App {
             .timeout(std::time::Duration::from_secs(120))
             .build()?;
         Ok(Arc::new(Self {
+            project_id,
             token,
             public_url,
             db: Mutex::new(db),
@@ -172,6 +266,9 @@ impl App {
     fn signature(&self, name: &str, expires: u64) -> String {
         let mut mac = Hmac::<Sha256>::new_from_slice(self.token.as_bytes())
             .expect("HMAC accepts any key length");
+        if let Some(id) = &self.project_id {
+            mac.update(format!("project\n{id}\n").as_bytes());
+        }
         mac.update(format!("file\n{expires}\n{name}").as_bytes());
         mac.finalize()
             .into_bytes()
@@ -187,6 +284,9 @@ impl App {
             self.public_url.as_str().trim_end_matches('/')
         ))
         .map_err(internal)?;
+        if let Some(id) = &self.project_id {
+            url.query_pairs_mut().append_pair("project", id);
+        }
         url.query_pairs_mut()
             .append_pair("name", name)
             .append_pair("expires", &expires.to_string())
@@ -203,8 +303,8 @@ fn unix_now() -> u64 {
 }
 
 async fn authenticate(
-    State(app): State<Arc<App>>,
-    request: axum::extract::Request,
+    State(server): State<Server>,
+    mut request: axum::extract::Request,
     next: Next,
 ) -> Response {
     let token = request
@@ -212,7 +312,16 @@ async fn authenticate(
         .get("authorization")
         .and_then(|h| h.to_str().ok())
         .and_then(|h| h.strip_prefix("Bearer "));
-    if token.is_none_or(|token| !bool::from(token.as_bytes().ct_eq(app.token.as_bytes()))) {
+    let mut selected = None;
+    if let Some(token) = token {
+        // ponytail: scan all project keys; index by key digest if project count makes auth cost measurable.
+        for app in server.projects.iter() {
+            if bool::from(token.as_bytes().ct_eq(app.token.as_bytes())) {
+                selected = Some(app.clone());
+            }
+        }
+    }
+    let Some(app) = selected else {
         let mut result = ApiError(
             StatusCode::UNAUTHORIZED,
             "Valid bearer token required".into(),
@@ -222,12 +331,13 @@ async fn authenticate(
             .headers_mut()
             .insert("www-authenticate", "Bearer".parse().unwrap());
         return result;
-    }
+    };
+    request.extensions_mut().insert(app);
     next.run(request).await
 }
 
 async fn handle(
-    State(app): State<Arc<App>>,
+    Extension(app): Extension<Arc<App>>,
     Path(path): Path<String>,
     params: Result<Query<Params>, QueryRejection>,
     method: Method,
@@ -254,10 +364,22 @@ async fn handle(
 }
 
 async fn download(
-    State(app): State<Arc<App>>,
+    State(server): State<Server>,
     params: Result<Query<Params>, QueryRejection>,
 ) -> ApiResult<Response> {
     let Query(params) = params.map_err(|_| bad("Invalid query parameters"))?;
+    let project = params.get("project").map(String::as_str);
+    let app = server
+        .projects
+        .iter()
+        .find(|app| app.project_id.as_deref() == project)
+        .cloned()
+        .ok_or_else(|| {
+            ApiError(
+                StatusCode::FORBIDDEN,
+                "Invalid or expired download URL".into(),
+            )
+        })?;
     let name = params.get("name").ok_or_else(|| bad("name is required"))?;
     let expires = params.get("expires").and_then(|v| v.parse::<u64>().ok());
     let valid = expires.is_some_and(|expires| {
@@ -282,10 +404,11 @@ async fn download(
         .map_err(internal)?
 }
 
-fn router(app: Arc<App>) -> Router {
+fn router(server: impl Into<Server>) -> Router {
+    let server = server.into();
     let protected = Router::new()
         .route("/fn/data/{*path}", any(handle))
-        .route_layer(middleware::from_fn_with_state(app.clone(), authenticate));
+        .route_layer(middleware::from_fn_with_state(server.clone(), authenticate));
     Router::new()
         .route(
             "/health",
@@ -294,36 +417,53 @@ fn router(app: Arc<App>) -> Router {
         .route("/downloads/file", get(download))
         .merge(protected)
         .fallback(|| async { missing().into_response() })
-        .with_state(app)
+        .with_state(server)
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let token = env::var("OPENRAILS_TOKEN")
-        .map_err(|_| "Set OPENRAILS_TOKEN to a strong random token (at least 32 characters)")?;
     let bind = env::var("OPENRAILS_BIND").unwrap_or_else(|_| "127.0.0.1:8787".into());
-    let public_url = env::var("OPENRAILS_PUBLIC_URL")
+    let public_url: reqwest::Url = env::var("OPENRAILS_PUBLIC_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:8787".into())
         .parse()?;
-    let config = match env::var("OPENRAILS_CONFIG") {
+    let config: Value = match env::var("OPENRAILS_CONFIG") {
         Ok(path) => serde_json::from_slice(&std::fs::read(path)?)?,
-        Err(env::VarError::NotPresent) => Config::default(),
+        Err(env::VarError::NotPresent) => json!({}),
         Err(error) => return Err(error.into()),
     };
     let db_path =
         env::var("OPENRAILS_DB_PATH").unwrap_or_else(|_| ".openrails/backend.sqlite3".into());
-    let files_dir = match env::var("OPENRAILS_FILES_DIR") {
-        Ok(path) => PathBuf::from(path),
-        Err(env::VarError::NotPresent) => FilePath::new(&db_path)
-            .parent()
-            .unwrap_or_else(|| FilePath::new("."))
-            .join("files"),
-        Err(error) => return Err(error.into()),
+    let data_dir = FilePath::new(&db_path)
+        .parent()
+        .unwrap_or_else(|| FilePath::new("."));
+    let server = if config.get("projects").is_some() {
+        let root = match env::var("OPENRAILS_PROJECTS_DIR") {
+            Ok(path) => PathBuf::from(path),
+            Err(env::VarError::NotPresent) => data_dir.join("projects"),
+            Err(error) => return Err(error.into()),
+        };
+        Server::open_projects(serde_json::from_value(config)?, public_url, &root)?
+    } else {
+        let token = env::var("OPENRAILS_TOKEN")
+            .map_err(|_| "Set OPENRAILS_TOKEN to a strong random token (at least 32 characters)")?;
+        let files_dir = match env::var("OPENRAILS_FILES_DIR") {
+            Ok(path) => PathBuf::from(path),
+            Err(env::VarError::NotPresent) => data_dir.join("files"),
+            Err(error) => return Err(error.into()),
+        };
+        App::open(
+            token,
+            public_url,
+            &db_path,
+            &files_dir,
+            serde_json::from_value(config)?,
+            None,
+        )?
+        .into()
     };
-    let app = App::open(token, public_url, &db_path, &files_dir, config)?;
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     eprintln!("OpenRails backend listening on {}", listener.local_addr()?);
-    axum::serve(listener, router(app))
+    axum::serve(listener, router(server))
         .with_graceful_shutdown(shutdown())
         .await?;
     Ok(())
