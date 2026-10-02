@@ -1,6 +1,7 @@
 /target
 /config.json
 /config.projects.json
+/example-app/config.json
 /.env
 /.openrails/
 node_modules/

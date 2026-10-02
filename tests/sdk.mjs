@@ -1,8 +1,8 @@
 // Run: cargo build --locked && node tests/sdk.mjs (Node 20+).
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, writeFile, readdir, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, copyFile, writeFile, readdir, readFile } from 'node:fs/promises';
 import { createServer, request as httpRequest } from 'node:http';
 import { createServer as createSocketServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -225,16 +225,42 @@ try {
   assert.equal(secrets.OPENRAILS_TOKEN, token);
   assert.equal((await fetch(`${url}/fn/data/files`)).status, 401);
   if (process.argv.includes('--demo')) {
-    assert.equal(JSON.parse(await readFile(join(root, 'demo/config.json'), 'utf8')).projects.demo.api_key_env, 'DEMO_API_KEY');
-    const missingKey = spawn(process.execPath, [join(root, 'demo/server.mjs')], {
-      env: { ...process.env, DEMO_API_KEY: undefined, OPENRAILS_TOKEN: token }, stdio: ['ignore', 'ignore', 'pipe'],
-    });
-    let missingKeyLogs = '';
-    missingKey.stderr.on('data', chunk => { missingKeyLogs += chunk; });
-    assert.equal((await once(missingKey, 'exit'))[0], 1);
-    assert.match(missingKeyLogs, /Set DEMO_API_KEY/);
-    const demo = spawn(process.execPath, [join(root, 'demo/server.mjs')], {
-      env: { ...process.env, OPENRAILS_URL: url, DEMO_API_KEY: token, OPENRAILS_TOKEN: 'wrong-global-key-must-not-be-used-by-the-demo', DEMO_PORT: '0' },
+    assert.equal(JSON.parse(await readFile(join(root, 'config.demo.example.json'), 'utf8')).projects.demo.api_key_env, 'DEMO_API_KEY');
+    const clientDir = join(dir, 'client');
+    await mkdir(clientDir);
+    for (const name of ['package.json', 'openrails-sdk-0.1.0.tgz', 'config.example.json', 'server.mjs', 'index.html', 'client.js']) {
+      await copyFile(join(root, 'example-app', name), join(clientDir, name));
+    }
+    assert.equal(JSON.parse(await readFile(join(clientDir, 'package.json'), 'utf8')).scripts.demo, 'node server.mjs');
+    assert.deepEqual(Object.keys(JSON.parse(await readFile(join(clientDir, 'config.example.json'), 'utf8'))).sort(), ['token', 'url']);
+    execFileSync('bun', ['install', '--offline'], { cwd: clientDir, timeout: 15000, stdio: 'pipe' });
+    execFileSync('bun', ['run', 'check'], { cwd: clientDir, timeout: 15000, stdio: 'pipe' });
+    await writeFile(join(clientDir, 'config.json'), JSON.stringify({ url, token }), { mode: 0o600 });
+    const privateMarker = 'private-config-token-must-never-appear-in-logs';
+    const invalidConfigs = [
+      [JSON.stringify({ url, token: '' }), /Put your existing project key/],
+      [JSON.stringify({ projects: {} }), /Client config must contain only url and token/],
+      [JSON.stringify({ url, token: 123 }), /Client config must contain only url and token/],
+      [JSON.stringify({ url, token, extra: true }), /Client config must contain only url and token/],
+      [`{"url":"${url}","token":"${privateMarker}" invalid}`, /Could not read client config/],
+    ];
+    for (const [configuration, expected] of invalidConfigs) {
+      const rejectedPath = join(dir, 'invalid-client.json');
+      await writeFile(rejectedPath, configuration);
+      const rejected = spawn(process.execPath, ['server.mjs'], {
+        cwd: clientDir,
+        env: { ...process.env, DEMO_CONFIG: rejectedPath, DEMO_API_KEY: undefined, OPENRAILS_URL: undefined, OPENRAILS_TOKEN: token }, stdio: ['ignore', 'ignore', 'pipe'], timeout: 5000,
+      });
+      let logs = '';
+      rejected.stderr.on('data', chunk => { logs += chunk; });
+      assert.equal((await once(rejected, 'exit'))[0], 1);
+      assert.match(logs, expected);
+      assert(!logs.includes(privateMarker));
+      assert(!logs.includes(token));
+    }
+    const demo = spawn(process.execPath, ['server.mjs'], {
+      cwd: clientDir,
+      env: { ...process.env, DEMO_CONFIG: undefined, OPENRAILS_URL: undefined, DEMO_API_KEY: undefined, OPENRAILS_TOKEN: 'wrong-global-key-must-not-be-used-by-the-demo', DEMO_PORT: '0' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let demoLogs = '';
@@ -260,8 +286,11 @@ try {
       assert((await fetch(`${demoUrl}/client.js`)).ok);
       const state = await action('context');
       assert.equal(state.ctx.user, null);
-      assert.equal(state.secrets.DEMO_API_KEY.configured, true);
+      assert.equal(state.secrets.DEMO_API_KEY.configured, false);
+      assert.equal(state.config.url, url);
+      assert.equal(state.config.token, '[never sent to browser]');
       assert(!JSON.stringify(state).includes(token));
+      assert.equal((await fetch(`${demoUrl}/config.json`)).status, 404);
       assert.equal((await action('users'))[0].id, 'user-1');
       assert.equal((await action('kv.seed')).length, 3);
       assert.equal((await action('kv.get')).score, 1);
