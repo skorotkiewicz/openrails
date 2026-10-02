@@ -1,7 +1,6 @@
 /target
-/.railcode/
 /config.json
+/config.projects.json
 /.env
 /.openrails/
 node_modules/
-/openrails-sdk/dist/
