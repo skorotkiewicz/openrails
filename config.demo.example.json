@@ -27,14 +27,6 @@
           }
         }
       }
-    },
-    "crm": {
-      "api_key_env": "CRM_API_KEY",
-      "config": {
-        "users": [
-          { "uuid": "owner", "name": "CRM Owner", "email": "crm@example.com", "is_admin": true }
-        ]
-      }
     }
   }
 }
