@@ -1,7 +1,7 @@
 {
   "projects": {
     "demo": {
-      "api_key_env": "OPENRAILS_TOKEN",
+      "api_key_env": "DEMO_API_KEY",
       "config": {
         "users": [
           { "uuid": "owner", "name": "Demo Owner", "email": "owner@example.com", "is_admin": true }

@@ -9,8 +9,8 @@ import {
 } from '@openrails/sdk';
 
 const backend = process.env.OPENRAILS_URL || 'http://127.0.0.1:8787';
-if (!process.env.OPENRAILS_TOKEN) throw new Error('Set OPENRAILS_TOKEN to your project API key. See demo/README.md.');
-configure({ url: backend, token: process.env.OPENRAILS_TOKEN });
+if (!process.env.DEMO_API_KEY) throw new Error('Set DEMO_API_KEY to the existing demo project key configured on your OpenRails server. See demo/README.md.');
+configure({ url: backend, token: process.env.DEMO_API_KEY });
 const port = Number(process.env.DEMO_PORT || 3000);
 if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid DEMO_PORT');
 const assets = new Map(await Promise.all(['index.html', 'client.js'].map(async name => [name, await readFile(new URL(name, import.meta.url))])));
@@ -50,7 +50,7 @@ const toolOptions = (p, signal) => ({ ...options(p, signal), tools: [double], li
 const scoped = p => (p.kind === 'role' ? db.scopedRole(text(p.owner, 'owner')) : db.scoped(text(p.owner, 'owner'))).collection('demo_tasks');
 
 const actions = {
-  'context': () => ({ ctx, backend, secrets: { OPENRAILS_TOKEN: { configured: Boolean(secrets.OPENRAILS_TOKEN), value: '[never sent to browser]' } } }),
+  'context': () => ({ ctx, backend, secrets: { DEMO_API_KEY: { configured: Boolean(secrets.DEMO_API_KEY), value: '[never sent to browser]' } } }),
   'users': () => appUsers(),
   'kv.seed': async () => {
     const values = [{ title: 'Try collections', score: 1, done: false }, { title: 'Upload a file', score: 2, done: true }, { title: 'Ask the local model', score: 3, done: false }];

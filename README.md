@@ -36,6 +36,10 @@ Build the local SDK first with `bun install && bun run build:sdk`. You can use `
 
 `OPENRAILS_URL` is the server origin, not `/fn/data`. All SDK requests carry `Authorization: Bearer <token>`. `/health` is public; generated file download links are public capabilities valid for 15 minutes.
 
+## Demo app
+
+The [browser demo](demo/README.md) exercises every SDK API group through a small Node server, keeping the project key out of the browser. It includes the local LLM at `http://192.168.0.124:8888/v1`, collection/query controls, file uploads/downloads, tool loops, and explicit unsupported-API errors. Follow its two-terminal setup; it uses a separate demo project and data directory.
+
 ## Multiple projects
 
 One process can serve multiple projects on the same URL. Copy `config.projects.example.json` to `config.json` and start it with distinct keys:
@@ -43,9 +47,12 @@ One process can serve multiple projects on the same URL. Copy `config.projects.e
 ```sh
 export SHOP_API_KEY="$(openssl rand -hex 32)"
 export CRM_API_KEY="$(openssl rand -hex 32)"
+export DEMO_API_KEY="$(openssl rand -hex 32)"
 export OPENRAILS_CONFIG=config.json
 cargo run --release --locked
 ```
+
+For the full demo, use the `projects.demo` entry from `demo/config.json` instead of the minimal entry below to include its local LLM, queries and connector. Supply the same `DEMO_API_KEY` to the demo app; do not generate another key on the client.
 
 The minimal configuration is:
 
@@ -53,7 +60,8 @@ The minimal configuration is:
 {
   "projects": {
     "shop": { "api_key_env": "SHOP_API_KEY" },
-    "crm": { "api_key_env": "CRM_API_KEY" }
+    "crm": { "api_key_env": "CRM_API_KEY" },
+    "demo": { "api_key_env": "DEMO_API_KEY" }
   }
 }
 ```

@@ -225,8 +225,16 @@ try {
   assert.equal(secrets.OPENRAILS_TOKEN, token);
   assert.equal((await fetch(`${url}/fn/data/files`)).status, 401);
   if (process.argv.includes('--demo')) {
+    assert.equal(JSON.parse(await readFile(join(root, 'demo/config.json'), 'utf8')).projects.demo.api_key_env, 'DEMO_API_KEY');
+    const missingKey = spawn(process.execPath, [join(root, 'demo/server.mjs')], {
+      env: { ...process.env, DEMO_API_KEY: undefined, OPENRAILS_TOKEN: token }, stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    let missingKeyLogs = '';
+    missingKey.stderr.on('data', chunk => { missingKeyLogs += chunk; });
+    assert.equal((await once(missingKey, 'exit'))[0], 1);
+    assert.match(missingKeyLogs, /Set DEMO_API_KEY/);
     const demo = spawn(process.execPath, [join(root, 'demo/server.mjs')], {
-      env: { ...process.env, OPENRAILS_URL: url, OPENRAILS_TOKEN: token, DEMO_PORT: '0' },
+      env: { ...process.env, OPENRAILS_URL: url, DEMO_API_KEY: token, OPENRAILS_TOKEN: 'wrong-global-key-must-not-be-used-by-the-demo', DEMO_PORT: '0' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let demoLogs = '';
@@ -252,6 +260,7 @@ try {
       assert((await fetch(`${demoUrl}/client.js`)).ok);
       const state = await action('context');
       assert.equal(state.ctx.user, null);
+      assert.equal(state.secrets.DEMO_API_KEY.configured, true);
       assert(!JSON.stringify(state).includes(token));
       assert.equal((await action('users'))[0].id, 'user-1');
       assert.equal((await action('kv.seed')).length, 3);

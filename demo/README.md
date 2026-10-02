@@ -2,33 +2,53 @@
 
 A small browser workbench using `@openrails/sdk` on a Node HTTP server. Plain HTML, CSS and JavaScript, no runtime dependencies beyond the SDK. Node 20+ and Rust are required. The demo listens only on `127.0.0.1:3000`; it is not a production app or a user-login system.
 
-## Run from the repository root
+## Connect to your server
 
-Install the workspace dependencies and create a private environment file once. The command refuses to overwrite an existing file:
+The demo **does not generate an API key**. Use the existing key configured for the demo project on your OpenRails server. Server administrators provision project keys through environment variables; the server has no HTTP endpoint for retrieving or issuing them.
+
+### 1. Register the project on the server
+
+Copy the `projects.demo` entry from `demo/config.json` into your server's `projects` map, keeping your other projects. It includes the local LLM, saved query and model-discovery connector. Its `api_key_env` is `DEMO_API_KEY`.
+
+Supply that project's existing secret in the **server environment** and restart the server with its configuration:
+
+```sh
+export DEMO_API_KEY='YOUR_EXISTING_DEMO_PROJECT_KEY'
+OPENRAILS_CONFIG=config.projects.json cargo run --locked
+```
+
+Use your actual server config path, and keep the other projects' credential variables available. For a newly provisioned project, the administrator chooses a strong random key once and gives the same key to its trusted application; the client never chooses a different key.
+
+### 2. Start the demo client
+
+From the repository root, in the demo app's terminal:
 
 ```sh
 bun install
-mkdir -p .openrails
-(umask 077; set -C; printf 'OPENRAILS_TOKEN=%s\nOPENRAILS_URL=http://127.0.0.1:8788\nOPENRAILS_BIND=127.0.0.1:8788\nOPENRAILS_PUBLIC_URL=http://127.0.0.1:8788\nOPENRAILS_PROJECTS_DIR=.openrails/demo-data\n' "$(openssl rand -hex 32)" > .openrails/demo.env)
-```
-
-Terminal 1, start the Rust backend:
-
-```sh
-set -a; . ./.openrails/demo.env; set +a
-bun run demo:backend
-```
-
-Terminal 2, start the demo (builds the npm package first):
-
-```sh
-set -a; . ./.openrails/demo.env; set +a
+export DEMO_API_KEY='YOUR_EXISTING_DEMO_PROJECT_KEY'
+export OPENRAILS_URL='http://127.0.0.1:8787'
 bun run demo
 ```
 
-Open **http://127.0.0.1:3000**. `npm run demo` and `npm run demo:backend` work too. Change `DEMO_PORT` if port 3000 is occupied. The dedicated backend uses port 8788 and `.openrails/demo-data/demo/`, leaving your usual server and project data untouched.
+Use the server's actual URL and the **exact same key value**. The demo calls `configure({ url, token: process.env.DEMO_API_KEY })`; no `OPENRAILS_TOKEN` alias is needed. SDK configuration happens once at Node startup, and browser requests never receive the key. Store the existing secret in your protected environment/service configuration, not a frontend bundle or Git.
 
-To use an already-running multi-project server instead, add the `demo` project from `demo/config.json` to its configuration, supply the matching key to that server, and restart it. Set the demo app's `OPENRAILS_URL` and `OPENRAILS_TOKEN` to that server and project key. SDK configuration happens once at Node startup; browser requests never receive the key.
+Open **http://127.0.0.1:3000**. `npm run demo` works too. Change `DEMO_PORT` if port 3000 is occupied.
+
+### Optional: dedicated local demo backend
+
+To avoid changing your usual server, start the included demo configuration separately. In the backend terminal:
+
+```sh
+export DEMO_API_KEY='YOUR_EXISTING_DEMO_PROJECT_KEY'
+export OPENRAILS_BIND='127.0.0.1:8788'
+export OPENRAILS_PUBLIC_URL='http://127.0.0.1:8788'
+export OPENRAILS_PROJECTS_DIR='.openrails/demo-data'
+bun run demo:backend
+```
+
+Then start the client with the same `DEMO_API_KEY` and `OPENRAILS_URL=http://127.0.0.1:8788`. This uses `.openrails/demo-data/demo/`, leaving your usual server and project data untouched. `npm run demo:backend` works too.
+
+If you used the previous `.openrails/demo.env` setup, keep its existing secret: source that file and run `export DEMO_API_KEY="$OPENRAILS_TOKEN"` in both terminals before restarting the backend and demo. No key rotation or data migration is needed.
 
 ## Local model
 
