@@ -1,6 +1,5 @@
 use crate::*;
 use rusqlite::{
-    OpenFlags,
     hooks::{AuthAction, AuthContext, Authorization},
     limits::Limit,
     types::ValueRef,
@@ -156,11 +155,7 @@ pub async fn handle(
         ("GET", "app-users") => Ok(response(
             serde_json::to_value(&app.config.users).map_err(internal)?,
         )),
-        ("GET", "connections") => Ok(response(if app.sql_path.is_some() {
-            json!([{"engine":"sqlite","name":"default"}])
-        } else {
-            json!([])
-        })),
+        ("GET", "connections") => Ok(response(json!([{"engine":"sqlite","name":"default"}]))),
         ("GET", "queries") => {
             let mut items: Vec<_> = app.config.queries.iter().map(|(name, query)| json!({"name":name,"description":query.description,"params":query.params,"version":1})).collect();
             items.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
@@ -169,8 +164,8 @@ pub async fn handle(
         ("POST", "sql") => {
             let body = parse_json(&body)?;
             if body.get("engine").is_some_and(|v| v != "sqlite") {
-                return Err(unavailable(
-                    "Requested SQL engine; use data.runSQL for local SQLite",
+                return Err(bad(
+                    "OpenRails uses its own SQLite database; other SQL engines are not supported",
                 ));
             }
             if body.get("connection").is_some_and(|v| v != "default") {
@@ -279,28 +274,20 @@ fn type_matches(kind: &str, value: &Value) -> bool {
 }
 
 async fn run_sql(app: Arc<App>, sql: String, params: Vec<Value>) -> ApiResult<Response> {
-    let path = app
-        .sql_path
-        .clone()
-        .ok_or_else(|| unavailable("SQLite data connection"))?;
-    tokio::task::spawn_blocking(move || sql_query(&path, &sql, &params).map(response))
-        .await
-        .map_err(internal)?
+    tokio::task::spawn_blocking(move || {
+        let db = app.db.lock().map_err(internal)?;
+        sql_query(&db, &sql, &params).map(response)
+    })
+    .await
+    .map_err(internal)?
 }
 
-pub(crate) fn sql_query(path: &str, sql: &str, params: &[Value]) -> ApiResult<Value> {
+pub(crate) fn sql_query(db: &Connection, sql: &str, params: &[Value]) -> ApiResult<Value> {
     if sql.len() > 65536 || params.len() > 1000 {
         return Err(bad("SQL or parameter limit exceeded"));
     }
-    let db = Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .map_err(internal)?;
-    db.busy_timeout(Duration::from_secs(5)).map_err(internal)?;
-    db.execute_batch("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF;")
-        .map_err(internal)?;
-    db.set_limit(Limit::SQLITE_LIMIT_LENGTH, MAX_UPSTREAM as i32)
+    let old_limit = db
+        .set_limit(Limit::SQLITE_LIMIT_LENGTH, MAX_UPSTREAM as i32)
         .map_err(internal)?;
     let deadline = Instant::now() + Duration::from_secs(5);
     db.progress_handler(1000, Some(move || Instant::now() > deadline));
@@ -315,64 +302,72 @@ pub(crate) fn sql_query(path: &str, sql: &str, params: &[Value]) -> ApiResult<Va
         }
         _ => Authorization::Deny,
     }));
-    let sql_error = |_| {
-        bad(
-            "SQL must be a valid, single read-only query with matching parameters (5s, 4 MiB limit)",
-        )
-    };
-    let mut statement = db.prepare(sql).map_err(sql_error)?;
-    if !statement.readonly() || statement.column_count() == 0 {
-        return Err(bad("Only read-only row queries are allowed"));
-    }
-    let columns: Vec<_> = statement
-        .column_names()
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
-    let bindings: Vec<rusqlite::types::Value> = params
-        .iter()
-        .map(|value| match value {
-            Value::Null => rusqlite::types::Value::Null,
-            Value::Bool(v) => rusqlite::types::Value::Integer(i64::from(*v)),
-            Value::Number(v) if v.as_i64().is_some() => {
-                rusqlite::types::Value::Integer(v.as_i64().unwrap())
-            }
-            Value::Number(v) => rusqlite::types::Value::Real(v.as_f64().unwrap()),
-            Value::String(v) => rusqlite::types::Value::Text(v.clone()),
-            value => rusqlite::types::Value::Text(value.to_string()),
-        })
-        .collect();
-    let mut cursor = statement
-        .query(rusqlite::params_from_iter(bindings))
-        .map_err(sql_error)?;
-    let mut rows = Vec::new();
-    let mut bytes = 0;
-    let mut truncated = false;
-    while let Some(row) = cursor.next().map_err(sql_error)? {
-        if rows.len() == 1000 {
-            truncated = true;
-            break;
+    // Always remove read-only hooks before releasing the shared database, including on errors.
+    let result = (|| {
+        let sql_error = |_| {
+            bad(
+                "SQL must be a valid, single read-only query with matching parameters (5s, 4 MiB limit)",
+            )
+        };
+        let mut statement = db.prepare(sql).map_err(sql_error)?;
+        if !statement.readonly() || statement.column_count() == 0 {
+            return Err(bad("Only read-only row queries are allowed"));
         }
-        let mut values = Vec::new();
-        for i in 0..columns.len() {
-            values.push(match row.get_ref(i).map_err(sql_error)? {
-                ValueRef::Null => Value::Null,
-                ValueRef::Integer(v) => json!(v),
-                ValueRef::Real(v) => json!(v),
-                ValueRef::Text(v) => json!(String::from_utf8_lossy(v)),
-                ValueRef::Blob(v) => {
-                    json!(v.iter().map(|b| format!("{b:02x}")).collect::<String>())
+        let columns: Vec<_> = statement
+            .column_names()
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        let bindings: Vec<rusqlite::types::Value> = params
+            .iter()
+            .map(|value| match value {
+                Value::Null => rusqlite::types::Value::Null,
+                Value::Bool(v) => rusqlite::types::Value::Integer(i64::from(*v)),
+                Value::Number(v) if v.as_i64().is_some() => {
+                    rusqlite::types::Value::Integer(v.as_i64().unwrap())
                 }
-            });
+                Value::Number(v) => rusqlite::types::Value::Real(v.as_f64().unwrap()),
+                Value::String(v) => rusqlite::types::Value::Text(v.clone()),
+                value => rusqlite::types::Value::Text(value.to_string()),
+            })
+            .collect();
+        let mut cursor = statement
+            .query(rusqlite::params_from_iter(bindings))
+            .map_err(sql_error)?;
+        let mut rows = Vec::new();
+        let mut bytes = 0;
+        let mut truncated = false;
+        while let Some(row) = cursor.next().map_err(sql_error)? {
+            if rows.len() == 1000 {
+                truncated = true;
+                break;
+            }
+            let mut values = Vec::new();
+            for i in 0..columns.len() {
+                values.push(match row.get_ref(i).map_err(sql_error)? {
+                    ValueRef::Null => Value::Null,
+                    ValueRef::Integer(v) => json!(v),
+                    ValueRef::Real(v) => json!(v),
+                    ValueRef::Text(v) => json!(String::from_utf8_lossy(v)),
+                    ValueRef::Blob(v) => {
+                        json!(v.iter().map(|b| format!("{b:02x}")).collect::<String>())
+                    }
+                });
+            }
+            bytes += serde_json::to_vec(&values).map_err(internal)?.len();
+            if bytes > MAX_UPSTREAM {
+                truncated = true;
+                break;
+            }
+            rows.push(values);
         }
-        bytes += serde_json::to_vec(&values).map_err(internal)?.len();
-        if bytes > MAX_UPSTREAM {
-            truncated = true;
-            break;
-        }
-        rows.push(values);
-    }
-    Ok(json!({"columns":columns,"rowcount":rows.len(),"rows":rows,"truncated":truncated}))
+        Ok(json!({"columns":columns,"rowcount":rows.len(),"rows":rows,"truncated":truncated}))
+    })();
+    db.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+    db.progress_handler(0, None::<fn() -> bool>);
+    db.set_limit(Limit::SQLITE_LIMIT_LENGTH, old_limit)
+        .map_err(internal)?;
+    result
 }
 
 async fn read_upstream(mut resp: reqwest::Response, truncate: bool) -> ApiResult<(Vec<u8>, bool)> {

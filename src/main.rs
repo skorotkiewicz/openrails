@@ -105,7 +105,6 @@ struct App {
     public_url: reqwest::Url,
     // ponytail: one SQLite lock per app; use a pool if concurrent writes become a bottleneck.
     db: Mutex<Connection>,
-    sql_path: Option<String>,
     config: Config,
     client: reqwest::Client,
 }
@@ -115,12 +114,12 @@ impl App {
         token: String,
         public_url: reqwest::Url,
         db_path: &str,
-        sql_path: Option<String>,
         config: Config,
     ) -> Result<Arc<Self>, Box<dyn std::error::Error>> {
         if token.len() < 32 || !token.is_ascii() || token.chars().any(char::is_whitespace) {
             return Err(
-                "RC_TOKEN must contain at least 32 ASCII characters without whitespace".into(),
+                "OPENRAILS_TOKEN must contain at least 32 ASCII characters without whitespace"
+                    .into(),
             );
         }
         if !matches!(public_url.scheme(), "http" | "https")
@@ -131,7 +130,7 @@ impl App {
             || public_url.fragment().is_some()
         {
             return Err(
-                "RC_PUBLIC_URL must be an HTTP(S) URL without credentials, query or fragment"
+                "OPENRAILS_PUBLIC_URL must be an HTTP(S) URL without credentials, query or fragment"
                     .into(),
             );
         }
@@ -145,7 +144,7 @@ impl App {
         let db = Connection::open(db_path)?;
         db.busy_timeout(std::time::Duration::from_secs(5))?;
         db.execute_batch(
-            "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
+            "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA trusted_schema=OFF;
             CREATE TABLE IF NOT EXISTS kv (
                 scope TEXT NOT NULL, collection TEXT NOT NULL, key TEXT NOT NULL,
                 value TEXT NOT NULL, updated_at TEXT NOT NULL,
@@ -163,7 +162,6 @@ impl App {
             token,
             public_url,
             db: Mutex::new(db),
-            sql_path,
             config,
             client,
         }))
@@ -299,27 +297,22 @@ fn router(app: Arc<App>) -> Router {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let token = env::var("RC_TOKEN")
-        .map_err(|_| "Set RC_TOKEN to a strong random token (at least 32 characters)")?;
-    let bind = env::var("RC_BIND").unwrap_or_else(|_| "127.0.0.1:8787".into());
-    let public_url = env::var("RC_PUBLIC_URL")
+    let token = env::var("OPENRAILS_TOKEN")
+        .map_err(|_| "Set OPENRAILS_TOKEN to a strong random token (at least 32 characters)")?;
+    let bind = env::var("OPENRAILS_BIND").unwrap_or_else(|_| "127.0.0.1:8787".into());
+    let public_url = env::var("OPENRAILS_PUBLIC_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:8787".into())
         .parse()?;
-    let config = match env::var("RC_CONFIG") {
+    let config = match env::var("OPENRAILS_CONFIG") {
         Ok(path) => serde_json::from_slice(&std::fs::read(path)?)?,
         Err(env::VarError::NotPresent) => Config::default(),
         Err(error) => return Err(error.into()),
     };
-    let db_path = env::var("RC_DB_PATH").unwrap_or_else(|_| ".railcode/backend.sqlite3".into());
-    let app = App::open(
-        token,
-        public_url,
-        &db_path,
-        env::var("RC_SQLITE_PATH").ok(),
-        config,
-    )?;
+    let db_path =
+        env::var("OPENRAILS_DB_PATH").unwrap_or_else(|_| ".openrails/backend.sqlite3".into());
+    let app = App::open(token, public_url, &db_path, config)?;
     let listener = tokio::net::TcpListener::bind(&bind).await?;
-    eprintln!("Railcode backend listening on {}", listener.local_addr()?);
+    eprintln!("OpenRails backend listening on {}", listener.local_addr()?);
     axum::serve(listener, router(app))
         .with_graceful_shutdown(shutdown())
         .await?;

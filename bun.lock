@@ -4,11 +4,20 @@
   "workspaces": {
     "": {
       "dependencies": {
-        "@railcode/sdk": "^0.4.0",
+        "@openrails/sdk": "workspace:*",
+      },
+    },
+    "openrails-sdk": {
+      "name": "@openrails/sdk",
+      "version": "0.1.0",
+      "devDependencies": {
+        "typescript": "^5.7.0",
       },
     },
   },
   "packages": {
-    "@railcode/sdk": ["@railcode/sdk@0.4.0", "", {}, "sha512-ryQTWkIMLyqO0D8HlXGZ+Mtpfv4qGbODZb2vuOjv4dSW2lnsjISQrf4Vp60Afn1UOSJD0g/SQZKWNu6P+IwcSA=="],
+    "@openrails/sdk": ["@openrails/sdk@workspace:openrails-sdk"],
+
+    "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
   }
 }

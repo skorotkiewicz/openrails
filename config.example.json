@@ -17,6 +17,11 @@
       "description": "Find a task in the external SQLite database",
       "sql": "SELECT id, title FROM tasks WHERE id = $1",
       "params": [{ "name": "id", "type": "integer" }]
+    },
+    "task_by_key": {
+      "description": "Read a task stored by OpenRails",
+      "sql": "SELECT key, json_extract(value, '$.title') AS title FROM kv WHERE scope = '' AND collection = 'tasks' AND key = $1",
+      "params": [{ "name": "key", "type": "string" }]
     }
   },
   "service_connectors": {

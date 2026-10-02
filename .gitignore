@@ -2,3 +2,6 @@
 /.railcode/
 /config.json
 /.env
+/.openrails/
+node_modules/
+/openrails-sdk/dist/

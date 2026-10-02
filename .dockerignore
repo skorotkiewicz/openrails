@@ -4,5 +4,6 @@ target
 .env
 .env.*
 config.json
-@railcode
+openrails-sdk
 node_modules
+.openrails

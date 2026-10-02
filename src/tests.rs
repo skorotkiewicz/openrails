@@ -9,7 +9,6 @@ fn app(path: &str) -> Arc<App> {
         TOKEN.into(),
         "http://localhost:8787".parse().unwrap(),
         path,
-        None,
         Config::default(),
     )
     .unwrap()
@@ -18,7 +17,7 @@ fn app(path: &str) -> Arc<App> {
 fn temp_path(label: &str) -> String {
     std::env::temp_dir()
         .join(format!(
-            "railcode-{label}-{}-{}.sqlite3",
+            "openrails-{label}-{}-{}.sqlite3",
             std::process::id(),
             time::OffsetDateTime::now_utc().unix_timestamp_nanos()
         ))
@@ -356,9 +355,10 @@ async fn files_signed_urls_and_reserved_names() {
 #[test]
 fn sql_is_read_only_and_parameterized() {
     let path = temp_path("sql");
-    Connection::open(&path).unwrap().execute_batch("CREATE TABLE tasks(id INTEGER PRIMARY KEY, title TEXT); INSERT INTO tasks VALUES(1,'hello');").unwrap();
+    let db = Connection::open(&path).unwrap();
+    db.execute_batch("CREATE TABLE tasks(id INTEGER PRIMARY KEY, title TEXT); INSERT INTO tasks VALUES(1,'hello');").unwrap();
     let result =
-        providers::sql_query(&path, "SELECT title FROM tasks WHERE id=$1", &[json!(1)]).unwrap();
+        providers::sql_query(&db, "SELECT title FROM tasks WHERE id=$1", &[json!(1)]).unwrap();
     assert_eq!(result["columns"], json!(["title"]));
     assert_eq!(result["rows"], json!([["hello"]]));
     assert_eq!(result["truncated"], false);
@@ -370,12 +370,15 @@ fn sql_is_read_only_and_parameterized() {
         "SELECT load_extension('x')",
     ] {
         assert_eq!(
-            providers::sql_query(&path, query, &[]).unwrap_err().0,
+            providers::sql_query(&db, query, &[]).unwrap_err().0,
             StatusCode::BAD_REQUEST,
             "{query}"
         );
     }
-    let result = providers::sql_query(&path, "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<1002) SELECT x FROM n", &[]).unwrap();
+    // A failed read-only query must not leave hooks installed on the primary database.
+    db.execute("INSERT INTO tasks VALUES(2,'still writable')", [])
+        .unwrap();
+    let result = providers::sql_query(&db, "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<1002) SELECT x FROM n", &[]).unwrap();
     assert_eq!(result["rowcount"], 1000);
     assert_eq!(result["truncated"], true);
 }

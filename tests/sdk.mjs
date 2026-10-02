@@ -1,4 +1,4 @@
-// Run: cargo build --locked && node tests/sdk.mjs (Node 22.13+).
+// Run: cargo build --locked && node tests/sdk.mjs (Node 20+).
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -7,12 +7,11 @@ import { createServer } from 'node:http';
 import { createServer as createSocketServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const dir = await mkdtemp(join(tmpdir(), 'railcode-sdk-'));
+const dir = await mkdtemp(join(tmpdir(), 'openrails-sdk-'));
 const token = 'sdk-test-token-with-at-least-32-characters';
 const providerRequests = [];
 const mock = createServer(async (req, res) => {
@@ -58,14 +57,10 @@ const mock = createServer(async (req, res) => {
 mock.listen(0, '127.0.0.1');
 await once(mock, 'listening');
 const provider = `http://127.0.0.1:${mock.address().port}`;
-const sqlPath = join(dir, 'source.sqlite3');
-const source = new DatabaseSync(sqlPath);
-source.exec("CREATE TABLE tasks(id INTEGER PRIMARY KEY,title TEXT); INSERT INTO tasks VALUES(1,'demo');");
-source.close();
 const configPath = join(dir, 'config.json');
 await writeFile(configPath, JSON.stringify({
   users: [{ uuid: 'user-1', name: 'Owner', email: 'owner@example.com', is_admin: true }],
-  queries: { task: { sql: 'SELECT title FROM tasks WHERE id=$1', params: [{ name: 'id', type: 'integer' }], description: 'One task' } },
+  queries: { task: { sql: "SELECT json_extract(value, '$.title') AS title FROM kv WHERE scope='' AND collection='sql_tasks' AND key=$1", params: [{ name: 'key', type: 'string' }], description: 'One task' } },
   llm: { base_url: `${provider}/v1`, api_key_env: 'MOCK_LLM_KEY', model: 'mock-model' },
   email: { url: `${provider}/emails`, from: 'sender@example.com', api_key_env: 'MOCK_EMAIL_KEY' },
   service_connectors: { mock: { base_url: provider, allowed_methods: ['GET', 'POST'], bearer_token_env: 'MOCK_CONNECTOR_KEY', usage_instructions: 'Local test' } },
@@ -77,10 +72,10 @@ await once(socket, 'listening');
 const port = socket.address().port;
 await new Promise(resolve => socket.close(resolve));
 const url = `http://127.0.0.1:${port}`;
-process.env.RC_DEV_TOKEN = token;
-process.env.RC_DATA_PLANE_URL = url;
-const server = spawn(join(root, 'target/debug/railcode-backend'), [], {
-  env: { ...process.env, RC_TOKEN: token, RC_BIND: `127.0.0.1:${port}`, RC_PUBLIC_URL: url, RC_DB_PATH: join(dir, 'backend.sqlite3'), RC_SQLITE_PATH: sqlPath, RC_CONFIG: configPath, MOCK_LLM_KEY: 'mock-llm-key', MOCK_EMAIL_KEY: 'mock-email-key', MOCK_CONNECTOR_KEY: 'mock-connector-key' },
+process.env.OPENRAILS_TOKEN = token;
+process.env.OPENRAILS_URL = url;
+const server = spawn(join(root, 'target/debug/openrails-backend'), [], {
+  env: { ...process.env, OPENRAILS_TOKEN: token, OPENRAILS_BIND: `127.0.0.1:${port}`, OPENRAILS_PUBLIC_URL: url, OPENRAILS_DB_PATH: join(dir, 'backend.sqlite3'), OPENRAILS_CONFIG: configPath, MOCK_LLM_KEY: 'mock-llm-key', MOCK_EMAIL_KEY: 'mock-email-key', MOCK_CONNECTOR_KEY: 'mock-connector-key' },
   stdio: ['ignore', 'ignore', 'pipe'],
 });
 let logs = '';
@@ -96,7 +91,9 @@ try {
     await delay(50);
   }
   assert(ready, logs || 'Backend did not start');
-  const { db, files, appUsers, data, dataConnectors, query, savedQueries, llm, llmProviders, email, connector, serviceConnectors, serviceConnectorDocs, agents, ApiError, ctx, secrets } = await import('../@railcode/sdk/dist/index.js');
+  const { db, files, appUsers, data, dataConnectors, query, savedQueries, llm, llmProviders, email, connector, serviceConnectors, serviceConnectorDocs, agents, ApiError, ctx, secrets, configure } = await import('@openrails/sdk');
+  assert.throws(() => configure({ url: 'file:///tmp/backend', token }), TypeError);
+  configure({ url, token });
   const tasks = db.collection('tasks');
   assert.equal(await tasks.get('missing'), null);
   assert.deepEqual(await tasks.put('folder/a ✓', { score: 2, active: true }), { score: 2, active: true });
@@ -135,15 +132,16 @@ try {
 
   assert.deepEqual(await appUsers(), [{ id: 'user-1', name: 'Owner', email: 'owner@example.com', is_admin: true }]);
   assert.deepEqual(await dataConnectors(), [{ engine: 'sqlite', name: 'default' }]);
-  const rows = await data.runSQL('SELECT title FROM tasks WHERE id=$1', [1]);
+  await db.collection('sql_tasks').put('1', { title: 'demo' });
+  const rows = await data.runSQL("SELECT json_extract(value, '$.title') AS title FROM kv WHERE scope='' AND collection='sql_tasks' AND key=$1", ['1']);
   assert.deepEqual(rows[0], { title: 'demo' });
   assert.deepEqual(rows.columns, ['title']);
   assert.equal(rows.rowcount, 1);
   assert.equal(rows.truncated, false);
   assert.equal((await savedQueries())[0].name, 'task');
-  assert.equal((await query('task', { id: 1 }))[0].title, 'demo');
-  await assert.rejects(query('task', { id: 'wrong' }), e => e.status === 400);
-  await assert.rejects(data.runSQL('DELETE FROM tasks'), e => e.status === 400);
+  assert.equal((await query('task', { key: '1' }))[0].title, 'demo');
+  await assert.rejects(query('task', { key: 1 }), e => e.status === 400);
+  await assert.rejects(data.runSQL('DELETE FROM kv'), e => e.status === 400);
 
   assert.equal((await llmProviders())[0].provider, 'openai');
   const result = await llm.generate('hello', { metadata: { tag: 'test' } });
@@ -186,7 +184,14 @@ try {
   await assert.rejects(agents.start('missing'), e => e.status === 501);
   assert.equal(ctx.user, null); // Static service token, not a fabricated user identity.
   assert.equal(ctx.trigger, 'http');
-  assert.equal(secrets.RC_DEV_TOKEN, token);
+  assert.equal(ctx.invocationId, 'local');
+  assert.equal('bigquery' in await import('@openrails/sdk'), false);
+  assert.equal('turso' in await import('@openrails/sdk'), false);
+  assert.equal('postgres' in await import('@openrails/sdk'), false);
+  // A failed SQL query must not disable primary KV writes.
+  await tasks.put('after-sql', { score: 4 });
+  assert.equal((await tasks.get('after-sql')).score, 4);
+  assert.equal(secrets.OPENRAILS_TOKEN, token);
   assert.equal((await fetch(`${url}/fn/data/files`)).status, 401);
   console.log('SDK smoke test passed: persistence APIs, SQL, LLM/tool loop/NDJSON, email, connectors, authentication.');
 } finally {
