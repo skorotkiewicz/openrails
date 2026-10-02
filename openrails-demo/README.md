@@ -1,4 +1,4 @@
-# OpenRails SDK example app
+# OpenRails SDK demo
 
 A small browser workbench using `@openrails/sdk` on a Node HTTP server. Plain HTML, CSS and JavaScript, no runtime dependencies beyond the SDK. Node 20+ and an already-running OpenRails server are required. The demo listens only on `127.0.0.1:3000`; it is not a production app or a user-login system.
 

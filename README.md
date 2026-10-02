@@ -38,7 +38,7 @@ Build the local SDK first with `bun install && bun run build:sdk`. You can use `
 
 ## Demo app
 
-The [browser demo](example-app/README.md) is a client of your running OpenRails server, keeping the project key out of the browser. It includes collection/query controls, file uploads/downloads, the project's configured LLM, tool loops, and explicit unsupported-API errors. Configure its client URL and existing project key as described in its README.
+The [browser demo](openrails-demo/README.md) is a client of your running OpenRails server, keeping the project key out of the browser. It includes collection/query controls, file uploads/downloads, the project's configured LLM, tool loops, and explicit unsupported-API errors. Configure its client URL and existing project key as described in its README.
 
 ## Multiple projects
 
@@ -52,7 +52,7 @@ export OPENRAILS_CONFIG=config.json
 cargo run --release --locked
 ```
 
-For the full demo, use the `projects.demo` entry from `config.demo.example.json` instead of the minimal entry below to include its local LLM, queries and connector. The demo app reads its own private `example-app/config.json` with `url` and `token`; use the same server-configured `DEMO_API_KEY` value as its token, not a newly generated client key.
+For the full demo, use the `projects.demo` entry from `config.demo.example.json` instead of the minimal entry below to include its local LLM, queries and connector. The demo app reads its own private `openrails-demo/config.json` with `url` and `token`; use the same server-configured `DEMO_API_KEY` value as its token, not a newly generated client key.
 
 The minimal configuration is:
 

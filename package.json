@@ -7,7 +7,7 @@
   "scripts": {
     "build:sdk": "bun run --cwd openrails-sdk build",
     "test:sdk": "bun run --cwd openrails-sdk test",
-    "demo": "bun run --cwd example-app demo",
+    "demo": "bun run --cwd openrails-demo demo",
     "demo:backend": "OPENRAILS_CONFIG=config.demo.example.json cargo run --locked",
     "test": "bun run test:sdk && cargo test --locked && cargo build --locked && node tests/sdk.mjs --demo && node tests/sdk.mjs --projects"
   }

@@ -229,7 +229,7 @@ try {
     const clientDir = join(dir, 'client');
     await mkdir(clientDir);
     for (const name of ['package.json', 'openrails-sdk-0.1.0.tgz', 'config.example.json', 'server.mjs', 'index.html', 'client.js']) {
-      await copyFile(join(root, 'example-app', name), join(clientDir, name));
+      await copyFile(join(root, 'openrails-demo', name), join(clientDir, name));
     }
     assert.equal(JSON.parse(await readFile(join(clientDir, 'package.json'), 'utf8')).scripts.demo, 'node server.mjs');
     assert.deepEqual(Object.keys(JSON.parse(await readFile(join(clientDir, 'config.example.json'), 'utf8'))).sort(), ['token', 'url']);
