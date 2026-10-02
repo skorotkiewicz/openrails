@@ -18,6 +18,7 @@ use sha2::Sha256;
 use std::{
     collections::HashMap,
     env,
+    path::{Path as FilePath, PathBuf},
     sync::{Arc, Mutex},
 };
 use subtle::ConstantTimeEq;
@@ -105,6 +106,7 @@ struct App {
     public_url: reqwest::Url,
     // ponytail: one SQLite lock per app; use a pool if concurrent writes become a bottleneck.
     db: Mutex<Connection>,
+    files_dir: PathBuf,
     config: Config,
     client: reqwest::Client,
 }
@@ -114,6 +116,7 @@ impl App {
         token: String,
         public_url: reqwest::Url,
         db_path: &str,
+        files_dir: &FilePath,
         config: Config,
     ) -> Result<Arc<Self>, Box<dyn std::error::Error>> {
         if token.len() < 32 || !token.is_ascii() || token.chars().any(char::is_whitespace) {
@@ -141,19 +144,17 @@ impl App {
         {
             std::fs::create_dir_all(parent)?;
         }
-        let db = Connection::open(db_path)?;
+        let mut db = Connection::open(db_path)?;
         db.busy_timeout(std::time::Duration::from_secs(5))?;
         db.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA trusted_schema=OFF;
             CREATE TABLE IF NOT EXISTS kv (
                 scope TEXT NOT NULL, collection TEXT NOT NULL, key TEXT NOT NULL,
                 value TEXT NOT NULL, updated_at TEXT NOT NULL,
-                PRIMARY KEY(scope, collection, key));
-            CREATE TABLE IF NOT EXISTS files (
-                name TEXT PRIMARY KEY, content_type TEXT NOT NULL, data BLOB NOT NULL,
-                updated_at TEXT NOT NULL);",
+                PRIMARY KEY(scope, collection, key));",
         )?;
         config.validate()?;
+        storage::initialize_files(&mut db, files_dir)?;
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(std::time::Duration::from_secs(120))
@@ -162,6 +163,7 @@ impl App {
             token,
             public_url,
             db: Mutex::new(db),
+            files_dir: files_dir.to_owned(),
             config,
             client,
         }))
@@ -310,7 +312,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let db_path =
         env::var("OPENRAILS_DB_PATH").unwrap_or_else(|_| ".openrails/backend.sqlite3".into());
-    let app = App::open(token, public_url, &db_path, config)?;
+    let files_dir = match env::var("OPENRAILS_FILES_DIR") {
+        Ok(path) => PathBuf::from(path),
+        Err(env::VarError::NotPresent) => FilePath::new(&db_path)
+            .parent()
+            .unwrap_or_else(|| FilePath::new("."))
+            .join("files"),
+        Err(error) => return Err(error.into()),
+    };
+    let app = App::open(token, public_url, &db_path, &files_dir, config)?;
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     eprintln!("OpenRails backend listening on {}", listener.local_addr()?);
     axum::serve(listener, router(app))

@@ -1,6 +1,6 @@
 # OpenRails
 
-OpenRails is the primary self-hosted Rust server. It owns the SQLite database for collections, files and SQL queries. No external database provider or object store is required. The `@openrails/sdk` package lives in `openrails-sdk/`, with editable TypeScript source, generated declarations and an ESM build.
+OpenRails is the primary self-hosted Rust server. It stores collections and file metadata in SQLite, and file contents on disk under `.openrails/files/`. No external database provider or object store is required. The `@openrails/sdk` package lives in `openrails-sdk/`, with editable TypeScript source, generated declarations and an ESM build.
 
 ## Run
 
@@ -43,10 +43,11 @@ Build the local SDK first with `bun install && bun run build:sdk`. You can use `
 | `OPENRAILS_TOKEN` | required | Strong random ASCII service token, at least 32 characters |
 | `OPENRAILS_BIND` | `127.0.0.1:8787` | Listen address |
 | `OPENRAILS_PUBLIC_URL` | `http://127.0.0.1:8787` | Externally reachable URL used in signed file links |
-| `OPENRAILS_DB_PATH` | `.openrails/backend.sqlite3` | Persistent KV/file database |
+| `OPENRAILS_DB_PATH` | `.openrails/backend.sqlite3` | Persistent collections and file metadata |
+| `OPENRAILS_FILES_DIR` | `files/` beside the database | File contents, default `.openrails/files/` |
 | `OPENRAILS_CONFIG` | unset | Optional JSON configuration file |
 
-Configuration is loaded at startup. KV, files and SQL work without any config. Copy `config.example.json` to `config.json` and set `OPENRAILS_CONFIG=config.json` to add a roster and saved queries. The example uses only OpenRails-owned data. LLM, email and HTTP connectors remain optional integrations; none is needed for the server to start. Configured credentials are referenced by environment-variable name, never sent in connector discovery responses, and must exist at startup.
+Configuration is loaded at startup. KV, files and SQL work without any config. Copy `config.example.json` to `config.json` and set `OPENRAILS_CONFIG=config.json` to add a roster and saved queries. Customize the example's queries for your stored data and remove optional integrations you do not use. LLM, email and HTTP connectors remain optional integrations; none is needed for the server to start. Configured credentials are referenced by environment-variable name, never sent in connector discovery responses, and must exist at startup.
 
 ```sh
 export OPENRAILS_CONFIG=config.json
@@ -65,8 +66,8 @@ Model capabilities determine whether tools and JSON schema output work. Optional
 | SDK API | Behavior |
 | --- | --- |
 | `db.collection()` | Persistent JSON get/put/delete, prefix, filters, order, count and pagination |
-| `db.scoped()` / `db.scopedRole()` | Read-only legacy scope views; empty until data is imported into SQLite |
-| `files` | Binary put/get/delete/list and HMAC-signed single/batch download URLs |
+| `db.scoped()` / `db.scopedRole()` | Read-only scoped views; empty until scoped data is imported into SQLite |
+| `files` | Disk-backed binary put/get/delete/list, streamed downloads and HMAC-signed single/batch URLs |
 | `appUsers()` | Configured roster; SDK receives `id` from the backend's `uuid` field |
 | `llm`, `llmProviders()` | Optional OpenAI-compatible completions, JSON output, tools, SDK-side tool loops and NDJSON responses |
 | `email.send()` | Optional Resend-compatible HTTP API; returns `accepted`, not a delivery guarantee |
@@ -79,15 +80,15 @@ OpenRails is the server of record, not a proxy to a hosted platform. `dataConnec
 
 ### Limits and semantics
 
-- One process and one token serve one trusted app. Use separate instances and databases for separate apps. Possession of the token grants full access to that instance's data and configured services. Do not expose it to browsers or untrusted users. User authorization belongs in your app.
-- Requests/files are limited to 16 MiB, upstream responses to 4 MiB. Connector bodies are truncated with `truncated: true`; other oversized upstream responses fail. Files are buffered in SQLite, not streamed from object storage.
+- One process and one token serve one trusted app. Use separate instances, databases and file directories for separate apps. Possession of the token grants full access to that instance's data and configured services. Do not expose it to browsers or untrusted users. User authorization belongs in your app.
+- Requests/files are limited to 16 MiB, upstream responses to 4 MiB. Connector bodies are truncated with `truncated: true`; other oversized upstream responses fail. Uploads are buffered up to the 16 MiB limit; downloads stream directly from disk. SQLite stores file names, content types, sizes, timestamps and generated storage keys, not new file contents. Logical file names never become filesystem paths.
 - Collection names are single path segments. Keys/file names may contain `/`, spaces and Unicode. Avoid `.` and `..` path segments because the SDK's URL builder normalizes those segments. Names are at most 1024 bytes, without control characters.
 - Pages are 1-based; default size is 100, maximum 1000. Filters operate on value fields, with dotted nested fields supported. `in` requires an array. Missing fields compare as `null`. Sorting supports value fields plus `key` and `updated_at`; equal values are ordered by key.
 - `updatedSince` is inclusive, `updatedBefore` is exclusive. Both accept RFC3339 timestamps with offsets. Filters and sorting scan one collection in memory. Move these to indexed SQL when collections outgrow this approach.
 - LLM NDJSON is wire-compatible but currently buffers one upstream completion before emitting `text` and `done`. It is not token-by-token streaming. Cost is `null`; usage comes from the provider. Add SSE translation when interactive token latency matters.
 - SQL reads the same `kv` and `files` tables used by the other APIs. For example: `SELECT key, json_extract(value, '$.title') AS title FROM kv WHERE scope = '' AND collection = 'tasks'`. SQLite SQL accepts `$1`, `$2`, etc. Only single read-only row queries are permitted. Writes, pragmas, attach and extension loading are denied by SQLite's authorizer. Query execution has a 5-second budget, 1000-row cap and 4 MiB data limit, reported through `truncated`. Blob columns are hex strings; objects/arrays bind as JSON text. Saved queries use the same constraints.
 - HTTP connector paths start with `/` and resolve relative to the configured origin, not a base path prefix. Redirects are never followed; upstream cookies, auth, location and private headers are not forwarded. Returned bodies are the upstream service's data.
-- Legacy rows use `kv.scope = 'user:<id>'` or `'role:<uuid>'`; normal rows use an empty scope. Import trusted legacy data offline. There is no scoped write API.
+- Scoped rows use `kv.scope = 'user:<id>'` or `'role:<uuid>'`; normal rows use an empty scope. Import trusted scoped data offline. There is no scoped write API.
 
 ## Container
 
@@ -102,7 +103,9 @@ The container runs as UID/GID 10001. Bind-mounted data directories must be writa
 
 For public hosting, put the server behind a TLS reverse proxy, set `OPENRAILS_BIND=0.0.0.0:8787` as needed and `OPENRAILS_PUBLIC_URL=https://your-host`. Keep the internal port firewalled. No browser CORS is enabled because this token is for trusted server-side SDK clients. Configure request timeouts and rate limits at the proxy.
 
-Protect the data directory and environment files with restrictive filesystem permissions. Data is stored unencrypted. Back up SQLite with its online backup mechanism, or stop the server and copy the whole data directory, including any WAL files. Token rotation invalidates existing signed file URLs. SIGINT/SIGTERM shuts down gracefully.
+Protect the data directory and environment files with restrictive filesystem permissions. Data is stored unencrypted. For a consistent backup, stop the server and copy the entire data directory, including SQLite/WAL files and `files/`. If `OPENRAILS_FILES_DIR` points elsewhere, back up that directory too. Token rotation invalidates existing signed file URLs. SIGINT/SIGTERM shuts down gracefully.
+
+Existing database-stored files are exported automatically at startup; their original database copies are retained for recovery. New uploads store only metadata in SQLite. Replacement uploads use new immutable files, so ongoing downloads retain their original bytes. Unreferenced versions and interrupted uploads are retained, not automatically garbage-collected; clean them offline only after taking a backup. `files.delete()` removes the active metadata and disk object.
 
 ## Checks
 
@@ -116,11 +119,3 @@ cargo build --locked && node tests/sdk.mjs
 ```
 
 The SDK smoke check requires Node 20+. It starts a real backend and local mock integrations, exercises the built TypeScript package via its workspace import, and makes no external service calls. Tests retain isolated databases under the OS temporary directory for inspection.
-
-## Migration from the initial backend
-
-- The binary/package is now `openrails-backend`, and the TypeScript package is `@openrails/sdk` in `openrails-sdk/`.
-- Settings use `OPENRAILS_*`; SDK clients use `OPENRAILS_TOKEN` and `OPENRAILS_URL`, or explicit `configure()`.
-- The default directory is now `.openrails/`. Existing `.railcode/` data is **not moved or deleted**. To continue using it, set `OPENRAILS_DB_PATH` to its existing `backend.sqlite3` path before starting the server.
-- External SQL database settings and provider namespaces have been removed. `data.runSQL()` now reads OpenRails-owned records.
-- The original compiled-only SDK is retained locally in `openrails-sdk/legacy-dist/` as a reference. It is excluded from builds and published packages.

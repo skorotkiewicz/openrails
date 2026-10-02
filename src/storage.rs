@@ -1,8 +1,100 @@
 use crate::*;
 use axum::http::header;
 use rusqlite::{OptionalExtension, params};
-use std::cmp::Ordering;
+#[cfg(unix)]
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::{
+    cmp::Ordering,
+    fs::{self, File, OpenOptions},
+    io::Write,
+};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+use tokio_util::io::ReaderStream;
+
+const FILES_SCHEMA: &str = "CREATE TABLE files (
+    name TEXT PRIMARY KEY, content_type TEXT NOT NULL,
+    storage_key TEXT NOT NULL UNIQUE, size INTEGER NOT NULL CHECK(size >= 0),
+    updated_at TEXT NOT NULL);";
+
+pub fn initialize_files(
+    db: &mut Connection,
+    directory: &FilePath,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    builder.mode(0o700);
+    builder.create(directory)?;
+    #[cfg(unix)]
+    if let Some(parent) = directory.parent().filter(|p| !p.as_os_str().is_empty()) {
+        File::open(parent)?.sync_all()?;
+    }
+    let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let columns = {
+        let mut statement = tx.prepare("PRAGMA table_info(files)")?;
+        statement
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    if columns.is_empty() {
+        tx.execute_batch(FILES_SCHEMA)?;
+    } else if columns.iter().any(|column| column == "data") {
+        // Keep the original bytes intact so a failed migration can be retried without data loss.
+        tx.execute_batch("ALTER TABLE files RENAME TO files_blob_backup;")?;
+        tx.execute_batch(FILES_SCHEMA)?;
+        let mut statement =
+            tx.prepare("SELECT name,content_type,data,updated_at FROM files_blob_backup")?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+        for row in rows {
+            let (name, content_type, data, updated_at) = row?;
+            let key = write_blob(&tx, directory, &data)?;
+            tx.execute("INSERT INTO files(name,content_type,storage_key,size,updated_at) VALUES(?1,?2,?3,?4,?5)",
+                params![name,content_type,key,data.len() as u64,updated_at])?;
+        }
+    } else if !columns.iter().any(|column| column == "storage_key")
+        || !columns.iter().any(|column| column == "size")
+    {
+        return Err("Unsupported files metadata schema".into());
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+fn write_blob(
+    db: &Connection,
+    directory: &FilePath,
+    data: &[u8],
+) -> Result<String, Box<dyn std::error::Error>> {
+    let key: String = db.query_row("SELECT lower(hex(randomblob(32)))", [], |row| row.get(0))?;
+    let temporary = directory.join(format!("{key}.tmp"));
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(&temporary)?;
+    file.write_all(data)?;
+    file.sync_all()?;
+    drop(file);
+    fs::rename(temporary, directory.join(format!("{key}.blob")))?;
+    #[cfg(unix)]
+    File::open(directory)?.sync_all()?;
+    // ponytail: retain unreferenced versions and interrupted uploads; add offline GC when disk usage matters.
+    Ok(key)
+}
+
+fn blob_path(directory: &FilePath, key: &str) -> ApiResult<PathBuf> {
+    if key.len() != 64 || !key.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(internal("Invalid file storage key"));
+    }
+    Ok(directory.join(format!("{key}.blob")))
+}
 
 fn now() -> ApiResult<String> {
     OffsetDateTime::now_utc().format(&Rfc3339).map_err(internal)
@@ -307,7 +399,7 @@ fn list(db: &Connection, scope: &str, collection: &str, query: &Params) -> ApiRe
 }
 
 fn metadata(db: &Connection, name: &str) -> ApiResult<Option<Value>> {
-    db.query_row("SELECT content_type,length(data),updated_at FROM files WHERE name=?1", [name], |row| {
+    db.query_row("SELECT content_type,size,updated_at FROM files WHERE name=?1", [name], |row| {
         Ok(json!({"name":name,"content_type":row.get::<_,String>(0)?,"size":row.get::<_,u64>(1)?,"updated_at":row.get::<_,String>(2)?}))
     }).optional().map_err(internal)
 }
@@ -324,9 +416,7 @@ fn files(
     match (method.as_str(), path) {
         ("GET", "files") => {
             let mut statement = db
-                .prepare(
-                    "SELECT name,content_type,length(data),updated_at FROM files ORDER BY name",
-                )
+                .prepare("SELECT name,content_type,size,updated_at FROM files ORDER BY name")
                 .map_err(internal)?;
             let rows = statement.query_map([], |row| Ok(json!({"name":row.get::<_,String>(0)?,"content_type":row.get::<_,String>(1)?,"size":row.get::<_,u64>(2)?,"updated_at":row.get::<_,String>(3)?}))).map_err(internal)?;
             let items = rows.collect::<Result<Vec<_>, _>>().map_err(internal)?;
@@ -342,9 +432,10 @@ fn files(
             if content_type.len() > 255 {
                 return Err(bad("Content-Type is too long"));
             }
-            db.execute("INSERT INTO files(name,content_type,data,updated_at) VALUES(?1,?2,?3,?4)
-                ON CONFLICT(name) DO UPDATE SET content_type=excluded.content_type,data=excluded.data,updated_at=excluded.updated_at",
-                params![name,content_type,body,now()?]).map_err(internal)?;
+            let key = write_blob(db, &app.files_dir, body).map_err(internal)?;
+            db.execute("INSERT INTO files(name,content_type,storage_key,size,updated_at) VALUES(?1,?2,?3,?4,?5)
+                ON CONFLICT(name) DO UPDATE SET content_type=excluded.content_type,storage_key=excluded.storage_key,size=excluded.size,updated_at=excluded.updated_at",
+                params![name,content_type,key,body.len() as u64,now()?]).map_err(internal)?;
             Ok(response(metadata(db, name)?.ok_or_else(missing)?))
         }
         ("POST", "files/url" | "files/urls") => {
@@ -377,12 +468,29 @@ fn files(
             }
             Ok(response(json!({"items":items,"missing":missing})))
         }
-        ("GET", _) => download_locked(db, path.strip_prefix("files/").ok_or_else(missing)?),
+        ("GET", _) => download_locked(app, db, path.strip_prefix("files/").ok_or_else(missing)?),
         ("DELETE", _) => {
             let name = path.strip_prefix("files/").ok_or_else(missing)?;
             name_valid(name)?;
-            db.execute("DELETE FROM files WHERE name=?1", [name])
+            let key: Option<String> = db
+                .query_row(
+                    "SELECT storage_key FROM files WHERE name=?1",
+                    [name],
+                    |row| row.get(0),
+                )
+                .optional()
                 .map_err(internal)?;
+            if let Some(key) = key {
+                let file_path = blob_path(&app.files_dir, &key)?;
+                // Remove the database reference first; an I/O failure leaves an orphan, not a broken live record.
+                db.execute("DELETE FROM files WHERE name=?1", [name])
+                    .map_err(internal)?;
+                match fs::remove_file(file_path) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(internal(error)),
+                }
+            }
             Ok(StatusCode::NO_CONTENT.into_response())
         }
         _ => Err(ApiError(
@@ -394,21 +502,44 @@ fn files(
 
 pub fn download(app: &App, name: &str) -> ApiResult<Response> {
     let db = app.db.lock().map_err(internal)?;
-    download_locked(&db, name)
+    download_locked(app, &db, name)
 }
 
-fn download_locked(db: &Connection, name: &str) -> ApiResult<Response> {
+fn download_locked(app: &App, db: &Connection, name: &str) -> ApiResult<Response> {
     name_valid(name)?;
-    let (content_type, data) = db
+    let (content_type, key, size) = db
         .query_row(
-            "SELECT content_type,data FROM files WHERE name=?1",
+            "SELECT content_type,storage_key,size FROM files WHERE name=?1",
             [name],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u64>(2)?,
+                ))
+            },
         )
         .optional()
         .map_err(internal)?
         .ok_or_else(missing)?;
-    let mut result = data.into_response();
+    let path = blob_path(&app.files_dir, &key)?;
+    if !fs::symlink_metadata(&path)
+        .map_err(internal)?
+        .file_type()
+        .is_file()
+    {
+        return Err(internal("Stored file is not a regular file"));
+    }
+    let file = File::open(path).map_err(internal)?;
+    if file.metadata().map_err(internal)?.len() != size {
+        return Err(internal("Stored file size does not match its metadata"));
+    }
+    let stream = ReaderStream::new(tokio::fs::File::from_std(file));
+    let mut result = axum::body::Body::from_stream(stream).into_response();
+    result.headers_mut().insert(
+        header::CONTENT_LENGTH,
+        size.to_string().parse().map_err(internal)?,
+    );
     result.headers_mut().insert(
         header::CONTENT_TYPE,
         content_type.parse().map_err(internal)?,

@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, readdir, readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createServer as createSocketServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -116,7 +116,16 @@ try {
   const meta = await files.put('nested/hello ✓.txt', 'file body');
   assert.equal(meta.size, 9);
   assert(meta.content_type.startsWith('text/plain'));
-  assert.equal(await (await files.get(meta.name)).text(), 'file body');
+  const stored = await readdir(join(dir, 'files'));
+  assert.equal(stored.length, 1);
+  assert.match(stored[0], /^[0-9a-f]{64}\.blob$/);
+  assert.equal(await readFile(join(dir, 'files', stored[0]), 'utf8'), 'file body');
+  const downloaded = await files.get(meta.name);
+  assert.equal(downloaded.headers.get('content-length'), '9');
+  assert.equal(await downloaded.text(), 'file body');
+  const columns = await data.runSQL("SELECT name FROM pragma_table_info('files')");
+  assert(!columns.some(column => column.name === 'data'));
+  assert(columns.some(column => column.name === 'size'));
   assert.equal(await files.get('missing'), null);
   assert.equal((await files.list()).length, 1);
   const batch = await files.urls([meta.name, 'missing']);
@@ -129,6 +138,14 @@ try {
   assert.equal((await fetch(tampered)).status, 403);
   await files.delete(meta.name);
   assert.equal(await files.get(meta.name), null);
+  assert.deepEqual(await readdir(join(dir, 'files')), []);
+  const binary = new Uint8Array([0, 255, 128, 1]);
+  await files.put('binary.dat', binary);
+  assert.deepEqual(new Uint8Array(await (await files.get('binary.dat')).arrayBuffer()), binary);
+  await files.put('stream.txt', new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('streamed upload')); controller.close(); } }));
+  assert.equal(await (await files.get('stream.txt')).text(), 'streamed upload');
+  await files.delete('binary.dat');
+  await files.delete('stream.txt');
 
   assert.deepEqual(await appUsers(), [{ id: 'user-1', name: 'Owner', email: 'owner@example.com', is_admin: true }]);
   assert.deepEqual(await dataConnectors(), [{ engine: 'sqlite', name: 'default' }]);

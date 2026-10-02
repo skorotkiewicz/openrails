@@ -5,10 +5,17 @@ use tower::ServiceExt;
 const TOKEN: &str = "test-token-with-at-least-32-characters";
 
 fn app(path: &str) -> Arc<App> {
+    let files_dir = PathBuf::from(if path == ":memory:" {
+        temp_path("files")
+    } else {
+        path.to_owned()
+    })
+    .with_extension("files");
     App::open(
         TOKEN.into(),
         "http://localhost:8787".parse().unwrap(),
         path,
+        &files_dir,
         Config::default(),
     )
     .unwrap()
@@ -381,4 +388,300 @@ fn sql_is_read_only_and_parameterized() {
     let result = providers::sql_query(&db, "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<1002) SELECT x FROM n", &[]).unwrap();
     assert_eq!(result["rowcount"], 1000);
     assert_eq!(result["truncated"], true);
+}
+
+#[tokio::test]
+async fn filesystem_files_are_immutable_and_keep_sqlite_small() {
+    let state = app(":memory:");
+    let routes = router(state.clone());
+    let original = "a".repeat(20_000);
+    assert_eq!(
+        request(
+            &routes,
+            "PUT",
+            "/fn/data/files/blob?name=nested%2Ffile",
+            &original,
+            true
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    let first_key: String = state
+        .db
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT storage_key FROM files WHERE name='nested/file'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let first_path = state.files_dir.join(format!("{first_key}.blob"));
+    assert_eq!(std::fs::read(&first_path).unwrap(), original.as_bytes());
+    let columns = {
+        let db = state.db.lock().unwrap();
+        let mut statement = db.prepare("PRAGMA table_info(files)").unwrap();
+        statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    };
+    assert!(!columns.iter().any(|column| column == "data"));
+    let snapshot = request(&routes, "GET", "/fn/data/files/nested/file", "", true).await;
+    assert_eq!(snapshot.headers()["content-length"], "20000");
+    assert_eq!(
+        request(
+            &routes,
+            "PUT",
+            "/fn/data/files/blob?name=nested%2Ffile",
+            "updated",
+            true
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    // An already-open download must finish with its original bytes, not the replacement.
+    assert_eq!(
+        to_bytes(snapshot.into_body(), MAX_BODY).await.unwrap(),
+        original
+    );
+    let current_key: String = state
+        .db
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT storage_key FROM files WHERE name='nested/file'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_ne!(current_key, first_key);
+    let updated = request(&routes, "GET", "/fn/data/files/nested/file", "", true).await;
+    assert_eq!(
+        to_bytes(updated.into_body(), MAX_BODY).await.unwrap(),
+        "updated"
+    );
+    // Failure after the disk write must preserve the currently committed file.
+    state.db.lock().unwrap().execute_batch("CREATE TRIGGER reject_file_update BEFORE UPDATE ON files BEGIN SELECT RAISE(ABORT,'test failure'); END;").unwrap();
+    assert_eq!(
+        request(
+            &routes,
+            "PUT",
+            "/fn/data/files/blob?name=nested%2Ffile",
+            "rejected",
+            true
+        )
+        .await
+        .status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    let unchanged = request(&routes, "GET", "/fn/data/files/nested/file", "", true).await;
+    assert_eq!(
+        to_bytes(unchanged.into_body(), MAX_BODY).await.unwrap(),
+        "updated"
+    );
+    assert_eq!(
+        request(&routes, "DELETE", "/fn/data/files/nested/file", "", true)
+            .await
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+    assert!(!state.files_dir.join(format!("{current_key}.blob")).exists());
+    assert_eq!(
+        request(&routes, "DELETE", "/fn/data/files/nested/file", "", true)
+            .await
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+    // Logical names cannot select filesystem paths, even when a direct API caller supplies ../.
+    assert_eq!(
+        request(
+            &routes,
+            "PUT",
+            "/fn/data/files/blob?name=..%2Foutside",
+            "safe",
+            true
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    assert!(!state.files_dir.join("outside").exists());
+    for entry in std::fs::read_dir(&state.files_dir).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name().into_string().unwrap();
+        assert!(name.ends_with(".blob"));
+        assert_eq!(name.len(), 69);
+        assert!(name[..64].bytes().all(|b| b.is_ascii_hexdigit()));
+    }
+}
+
+#[tokio::test]
+async fn sqlite_blobs_migrate_once_and_preserve_originals() {
+    let path = temp_path("blob-migration");
+    let db = Connection::open(&path).unwrap();
+    db.execute_batch("CREATE TABLE files(name TEXT PRIMARY KEY,content_type TEXT NOT NULL,data BLOB NOT NULL,updated_at TEXT NOT NULL);").unwrap();
+    let binary = [0_u8, 1, 255, 128];
+    let updated = "2026-01-01T00:00:00Z";
+    db.execute(
+        "INSERT INTO files VALUES(?1,?2,?3,?4)",
+        rusqlite::params![
+            "folder/binary",
+            "application/octet-stream",
+            binary.as_slice(),
+            updated
+        ],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO files VALUES(?1,?2,?3,?4)",
+        rusqlite::params!["empty", "text/plain", &[] as &[u8], updated],
+    )
+    .unwrap();
+    drop(db);
+    let state = app(&path);
+    let routes = router(state.clone());
+    let result = request(&routes, "GET", "/fn/data/files/folder/binary", "", true).await;
+    assert_eq!(result.status(), StatusCode::OK);
+    assert_eq!(result.headers()["content-type"], "application/octet-stream");
+    assert_eq!(
+        to_bytes(result.into_body(), MAX_BODY)
+            .await
+            .unwrap()
+            .as_ref(),
+        binary
+    );
+    let meta = json_body(request(&routes, "GET", "/fn/data/files", "", true).await).await;
+    assert_eq!(meta["items"][1]["size"], 4);
+    assert_eq!(meta["items"][1]["updated_at"], updated);
+    let result = request(&routes, "GET", "/fn/data/files/empty", "", true).await;
+    assert_eq!(result.headers()["content-length"], "0");
+    assert!(
+        to_bytes(result.into_body(), MAX_BODY)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let db = state.db.lock().unwrap();
+    let original: Vec<u8> = db
+        .query_row(
+            "SELECT data FROM files_blob_backup WHERE name='folder/binary'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(original, binary);
+    let key: String = db
+        .query_row(
+            "SELECT storage_key FROM files WHERE name='folder/binary'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    drop(db);
+    let directory = state.files_dir.clone();
+    drop(routes);
+    drop(state);
+    let reopened = app(&path);
+    let next_key: String = reopened
+        .db
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT storage_key FROM files WHERE name='folder/binary'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(next_key, key);
+    assert_eq!(std::fs::read_dir(directory).unwrap().count(), 2);
+}
+
+#[test]
+fn failed_blob_migration_rolls_back_and_can_be_retried() {
+    let path = temp_path("migration-failure");
+    let directory = PathBuf::from(&path).with_extension("files");
+    let mut db = Connection::open(&path).unwrap();
+    db.execute_batch("CREATE TABLE files(name TEXT PRIMARY KEY,content_type TEXT NOT NULL,data BLOB NOT NULL,updated_at TEXT NOT NULL);
+        INSERT INTO files VALUES('good','text/plain',x'68656c6c6f','2026-01-01T00:00:00Z');
+        INSERT INTO files VALUES('bad','text/plain','invalid blob type','2026-01-01T00:00:00Z');").unwrap();
+    assert!(storage::initialize_files(&mut db, &directory).is_err());
+    let original: Vec<u8> = db
+        .query_row("SELECT data FROM files WHERE name='good'", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(original, b"hello");
+    assert_eq!(
+        db.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name='files_blob_backup'",
+            [],
+            |row| row.get::<_, u64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    db.execute("UPDATE files SET data=x'6669786564' WHERE name='bad'", [])
+        .unwrap();
+    storage::initialize_files(&mut db, &directory).unwrap();
+    assert_eq!(
+        db.query_row("SELECT COUNT(*) FROM files", [], |row| row.get::<_, u64>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        db.query_row("SELECT COUNT(*) FROM files_blob_backup", [], |row| row
+            .get::<_, u64>(0))
+            .unwrap(),
+        2
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn downloads_reject_unsafe_storage_keys_and_symlinks() {
+    let state = app(":memory:");
+    let routes = router(state.clone());
+    request(
+        &routes,
+        "PUT",
+        "/fn/data/files/blob?name=test",
+        "safe",
+        true,
+    )
+    .await;
+    state
+        .db
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE files SET storage_key='../outside' WHERE name='test'",
+            [],
+        )
+        .unwrap();
+    assert_eq!(
+        request(&routes, "GET", "/fn/data/files/test", "", true)
+            .await
+            .status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    let target = state.files_dir.join("sentinel");
+    std::fs::write(&target, "outside content").unwrap();
+    let key = "a".repeat(64);
+    std::os::unix::fs::symlink(&target, state.files_dir.join(format!("{key}.blob"))).unwrap();
+    state
+        .db
+        .lock()
+        .unwrap()
+        .execute("UPDATE files SET storage_key=?1 WHERE name='test'", [&key])
+        .unwrap();
+    assert_eq!(
+        request(&routes, "GET", "/fn/data/files/test", "", true)
+            .await
+            .status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
 }
