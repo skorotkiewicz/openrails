@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "@railcode/sdk": "^0.4.0",
+      },
+    },
+  },
+  "packages": {
+    "@railcode/sdk": ["@railcode/sdk@0.4.0", "", {}, "sha512-ryQTWkIMLyqO0D8HlXGZ+Mtpfv4qGbODZb2vuOjv4dSW2lnsjISQrf4Vp60Afn1UOSJD0g/SQZKWNu6P+IwcSA=="],
+  }
+}
