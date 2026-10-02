@@ -98,6 +98,17 @@ fn compare(left: &Value, right: &Value) -> Option<Ordering> {
     }
 }
 
+fn sort_value(left: &Value, right: &Value) -> Ordering {
+    fn rank(value: &Value) -> u8 {
+        match value {
+            Value::Null => 0, Value::Bool(_) => 1, Value::Number(_) => 2,
+            Value::String(_) => 3, Value::Array(_) => 4, Value::Object(_) => 5,
+        }
+    }
+    rank(left).cmp(&rank(right)).then_with(|| compare(left, right)
+        .unwrap_or_else(|| left.to_string().cmp(&right.to_string())))
+}
+
 fn equal(left: &Value, right: &Value) -> bool {
     compare(left, right) == Some(Ordering::Equal) || left == right
 }
@@ -164,8 +175,8 @@ fn list(db: &Connection, scope: &str, collection: &str, query: &Params) -> ApiRe
         records.sort_by(|a, b| {
             let order = match name.as_str() {
                 "key" => a.key.cmp(&b.key),
-                "updated_at" => a.updated_at.cmp(&b.updated_at),
-                _ => compare(field(a, &name), field(b, &name)).unwrap_or(Ordering::Equal),
+                "updated_at" => timestamp(&a.updated_at).ok().cmp(&timestamp(&b.updated_at).ok()),
+                _ => sort_value(field(a, &name), field(b, &name)),
             };
             let order = if direction == "desc" { order.reverse() } else { order };
             order.then_with(|| a.key.cmp(&b.key))

@@ -136,7 +136,7 @@ impl App {
 
     fn file_url(&self, name: &str) -> ApiResult<Value> {
         let expires = unix_now() + FILE_URL_TTL;
-        let mut url = reqwest::Url::parse(&format!("{}/fn/data/files/download", self.public_url.as_str().trim_end_matches('/')))
+        let mut url = reqwest::Url::parse(&format!("{}/downloads/file", self.public_url.as_str().trim_end_matches('/')))
             .map_err(internal)?;
         url.query_pairs_mut().append_pair("name", name)
             .append_pair("expires", &expires.to_string())
@@ -193,7 +193,7 @@ fn router(app: Arc<App>) -> Router {
         .route_layer(middleware::from_fn_with_state(app.clone(), authenticate));
     Router::new()
         .route("/health", get(|| async { axum::Json(json!({"status":"ok"})) }))
-        .route("/fn/data/files/download", get(download))
+        .route("/downloads/file", get(download))
         .merge(protected)
         .fallback(|| async { missing().into_response() })
         .with_state(app)

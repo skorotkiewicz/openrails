@@ -193,7 +193,7 @@ pub(crate) fn sql_query(path: &str, sql: &str, params: &[Value]) -> ApiResult<Va
     let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX).map_err(internal)?;
     db.busy_timeout(Duration::from_secs(5)).map_err(internal)?;
     db.execute_batch("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF;").map_err(internal)?;
-    db.set_limit(Limit::SQLITE_LIMIT_LENGTH, MAX_UPSTREAM as i32);
+    db.set_limit(Limit::SQLITE_LIMIT_LENGTH, MAX_UPSTREAM as i32).map_err(internal)?;
     let deadline = Instant::now() + Duration::from_secs(5);
     db.progress_handler(1000, Some(move || Instant::now() > deadline));
     db.authorizer(Some(|context: AuthContext<'_>| match context.action {
