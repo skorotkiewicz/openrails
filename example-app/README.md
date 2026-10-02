@@ -38,7 +38,7 @@ Generation, message arrays, JSON output, NDJSON, raw streams, tool definitions, 
 ## Coverage and safety
 
 - Collection CRUD, list, every filter operator, prefix, ordering, time bounds, pages, first and count. The explicit seed button replaces only sample-a/b/c in `demo_tasks`.
-- File text/stream/byte uploads, bounded previews, streamed downloads, list, single/batch signed URLs and deletion. Names use `demo/`; uploads are capped at 16 MiB. Delete buttons require confirmation. There is no automatic cleanup.
+- File text/stream/byte uploads, bounded previews, streamed downloads, list, single/batch signed URLs and deletion. Uploads are capped at 16 MiB. Delete buttons require confirmation. There is no automatic cleanup.
 - Local SQL with parameters and metadata, the `default` database handle, saved-query discovery/execution and database discovery.
 - Static project roster, user/role read-only scopes, standalone context and redacted environment-access examples. Scope results are empty until scoped rows are imported offline.
 - HTTP connector discovery/docs, text/JSON responses, tools and reserved calls. Agents and MCP execution return the backend's actual `501` errors.
