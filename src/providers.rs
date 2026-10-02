@@ -467,6 +467,10 @@ async fn generate(app: &App, body: Value) -> ApiResult<Value> {
         }
     }
     let mut request = json!({"model":model,"messages":messages});
+    if let Some(metadata) = body.get("metadata") {
+        if !metadata.is_object() { return Err(bad("metadata must be an object")); }
+        request["metadata"] = metadata.clone();
+    }
     if let Some(limit) = body.get("maxOutputTokens") {
         if !limit.as_u64().is_some_and(|n| (1..=131072).contains(&n)) {
             return Err(bad("maxOutputTokens must be 1..131072"));
@@ -571,7 +575,12 @@ async fn send_email(app: &App, body: Value) -> ApiResult<Response> {
         .email
         .as_ref()
         .ok_or_else(|| unavailable("Email provider"))?;
-    required(&body, "subject")?;
+    if required(&body, "subject")?.contains(['\r', '\n']) {
+        return Err(bad("subject cannot contain line breaks"));
+    }
+    if body.get("replyTo").is_some_and(|v| v.as_str().is_none_or(|v| v.is_empty() || v.contains(['\r', '\n']))) {
+        return Err(bad("Invalid replyTo"));
+    }
     for key in ["to", "cc", "bcc"] {
         let value = body.get(key);
         if key == "to" && value.is_none() {
@@ -619,7 +628,7 @@ async fn send_email(app: &App, body: Value) -> ApiResult<Response> {
             "Email provider returned no id".into(),
         )
     })?;
-    Ok(response(json!({"id":id,"status":"sent","requestId":id})))
+    Ok(response(json!({"id":id,"status":"accepted","requestId":id})))
 }
 
 fn connector_info(name: &str, config: &Connector, docs: bool) -> Value {

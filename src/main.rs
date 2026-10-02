@@ -135,13 +135,12 @@ impl App {
                     .into(),
             );
         }
-        if db_path != ":memory:" {
-            if let Some(parent) = std::path::Path::new(db_path)
+        if db_path != ":memory:"
+            && let Some(parent) = std::path::Path::new(db_path)
                 .parent()
                 .filter(|p| !p.as_os_str().is_empty())
-            {
-                std::fs::create_dir_all(parent)?;
-            }
+        {
+            std::fs::create_dir_all(parent)?;
         }
         let db = Connection::open(db_path)?;
         db.busy_timeout(std::time::Duration::from_secs(5))?;

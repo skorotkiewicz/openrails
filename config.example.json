@@ -1,0 +1,33 @@
+{
+  "users": [
+    { "uuid": "owner", "name": "Owner", "email": "owner@example.com", "is_admin": true }
+  ],
+  "llm": {
+    "base_url": "https://api.openai.com/v1",
+    "api_key_env": "OPENAI_API_KEY",
+    "model": "gpt-4o-mini",
+    "provider": "openai"
+  },
+  "email": {
+    "api_key_env": "RESEND_API_KEY",
+    "from": "Railcode <notifications@example.com>"
+  },
+  "queries": {
+    "task_by_id": {
+      "description": "Find a task in the external SQLite database",
+      "sql": "SELECT id, title FROM tasks WHERE id = $1",
+      "params": [{ "name": "id", "type": "integer" }]
+    }
+  },
+  "service_connectors": {
+    "example": {
+      "base_url": "https://api.example.com",
+      "description": "Example HTTP service",
+      "allowed_methods": ["GET"],
+      "bearer_token_env": "EXAMPLE_API_TOKEN",
+      "content_type": "application/json",
+      "api_docs_link": "https://api.example.com/docs",
+      "usage_instructions": "Use connector('example').fetch('/resource')"
+    }
+  }
+}
