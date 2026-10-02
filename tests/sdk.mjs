@@ -107,7 +107,7 @@ try {
   assert.equal(await tasks.where('active', 'eq', true).count(), 2);
   assert.equal((await tasks.where('score', 'in', [2, 3]).orderBy('score', 'desc').first()).key, 'c');
   assert.equal((await tasks.query().orderBy('score').page(2, 1))[0].key, 'folder/a ✓');
-  assert.equal((await tasks.prefix('folder/').list?.()) ?? (await tasks.prefix('folder/').page()).length, 1);
+  assert.equal((await tasks.prefix('folder/').page()).length, 1);
   assert.equal(await tasks.query().updatedSince(new Date('2000-01-01')).count(), 3);
   assert.equal(await tasks.query().updatedBefore(new Date('2000-01-01')).count(), 0);
   assert.deepEqual(await db.scoped('user-1').collection('tasks').list(), []);

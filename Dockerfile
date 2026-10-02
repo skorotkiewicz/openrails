@@ -6,7 +6,6 @@ RUN cargo build --release --locked
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
     && mkdir /data && chown 10001:10001 /data
 COPY --from=build /app/target/release/railcode-backend /usr/local/bin/railcode-backend
 USER 10001:10001
