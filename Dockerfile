@@ -1,7 +1,7 @@
 FROM rust:1-bookworm AS build
 WORKDIR /app
-COPY Cargo.toml Cargo.lock ./
-COPY src ./src
+COPY openrails-backend/Cargo.toml openrails-backend/Cargo.lock ./
+COPY openrails-backend/src ./src
 RUN cargo build --release --locked
 
 FROM debian:bookworm-slim

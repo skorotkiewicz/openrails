@@ -1,9 +1,8 @@
-.git
-target
-.railcode
-.env
-.env.*
-config.json
-openrails-sdk
-node_modules
-.openrails
+# Send only the backend build inputs, never local configuration or data.
+**
+!Dockerfile
+!openrails-backend/
+!openrails-backend/Cargo.toml
+!openrails-backend/Cargo.lock
+!openrails-backend/src/
+!openrails-backend/src/**

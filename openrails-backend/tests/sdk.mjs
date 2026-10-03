@@ -1,4 +1,4 @@
-// Run: cargo build --locked && node tests/sdk.mjs (Node 20+).
+// From the repository root: cargo build --manifest-path openrails-backend/Cargo.toml --locked && node openrails-backend/tests/sdk.mjs (Node 20+; build the SDK first).
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
 import { once } from 'node:events';
@@ -10,7 +10,8 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
-const root = fileURLToPath(new URL('../', import.meta.url));
+const root = fileURLToPath(new URL('../../', import.meta.url));
+const backendBinary = fileURLToPath(new URL('../target/debug/openrails-backend', import.meta.url));
 const dir = await mkdtemp(join(tmpdir(), 'openrails-sdk-'));
 const token = 'sdk-test-token-with-at-least-32-characters';
 const otherToken = 'other-project-key-with-at-least-32-characters';
@@ -87,7 +88,7 @@ const url = `http://127.0.0.1:${port}`;
 process.env.OPENRAILS_TOKEN = token;
 process.env.OPENRAILS_URL = url;
 const serverEnv = { ...process.env, OPENRAILS_TOKEN: multi ? 'unused-global-token-with-at-least-32-characters' : token, MOCK_PROJECT_KEY: token, MOCK_OTHER_KEY: otherToken, OPENRAILS_PROJECTS_DIR: join(dir, 'projects'), OPENRAILS_FILES_DIR: join(storageDir, 'files'), OPENRAILS_BIND: `127.0.0.1:${port}`, OPENRAILS_PUBLIC_URL: url, OPENRAILS_DB_PATH: join(dir, 'backend.sqlite3'), OPENRAILS_CONFIG: configPath, MOCK_LLM_KEY: 'mock-llm-key', MOCK_EMAIL_KEY: 'mock-email-key', MOCK_CONNECTOR_KEY: 'mock-connector-key' };
-const server = spawn(join(root, 'target/debug/openrails-backend'), [], {
+const server = spawn(backendBinary, [], {
   env: serverEnv,
   stdio: ['ignore', 'ignore', 'pipe'],
 });
@@ -228,10 +229,14 @@ try {
     assert.equal(JSON.parse(await readFile(join(root, 'config.demo.example.json'), 'utf8')).projects.demo.api_key_env, 'DEMO_API_KEY');
     const clientDir = join(dir, 'client');
     await mkdir(clientDir);
-    for (const name of ['package.json', 'openrails-sdk-0.1.0.tgz', 'config.example.json', 'server.mjs', 'index.html', 'client.js']) {
+    for (const name of ['package.json', 'config.example.json', 'server.mjs', 'index.html', 'client.js']) {
       await copyFile(join(root, 'openrails-demo', name), join(clientDir, name));
     }
-    assert.equal(JSON.parse(await readFile(join(clientDir, 'package.json'), 'utf8')).scripts.demo, 'node server.mjs');
+    const [packed] = JSON.parse(execFileSync('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', clientDir], { cwd: join(root, 'openrails-sdk'), encoding: 'utf8', stdio: 'pipe' }));
+    const clientPackage = JSON.parse(await readFile(join(clientDir, 'package.json'), 'utf8'));
+    clientPackage.dependencies.openrails = `file:./${packed.filename}`;
+    await writeFile(join(clientDir, 'package.json'), JSON.stringify(clientPackage));
+    assert.equal(clientPackage.scripts.demo, 'node server.mjs');
     assert.deepEqual(Object.keys(JSON.parse(await readFile(join(clientDir, 'config.example.json'), 'utf8'))).sort(), ['token', 'url']);
     execFileSync('bun', ['install', '--offline'], { cwd: clientDir, timeout: 15000, stdio: 'pipe' });
     execFileSync('bun', ['run', 'check'], { cwd: clientDir, timeout: 15000, stdio: 'pipe' });
@@ -428,7 +433,7 @@ try {
       const rejectedDir = await mkdtemp(join(tmpdir(), 'openrails-invalid-project-'));
       const rejectedConfig = join(rejectedDir, 'config.json');
       await writeFile(rejectedConfig, JSON.stringify(configuration));
-      const rejected = spawn(join(root, 'target/debug/openrails-backend'), [], {
+      const rejected = spawn(backendBinary, [], {
         env: { ...serverEnv, ...environment, OPENRAILS_CONFIG: rejectedConfig, OPENRAILS_BIND: '127.0.0.1:0', OPENRAILS_DB_PATH: join(rejectedDir, 'backend.sqlite3'), OPENRAILS_PROJECTS_DIR: join(rejectedDir, 'projects') },
         stdio: ['ignore', 'ignore', 'pipe'], timeout: 5000,
       });

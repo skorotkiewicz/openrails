@@ -8,7 +8,7 @@
     "build:sdk": "bun run --cwd openrails-sdk build",
     "test:sdk": "bun run --cwd openrails-sdk test",
     "demo": "bun run --cwd openrails-demo demo",
-    "demo:backend": "OPENRAILS_CONFIG=config.demo.example.json cargo run --locked",
-    "test": "bun run test:sdk && cargo test --locked && cargo build --locked && node tests/sdk.mjs --demo && node tests/sdk.mjs --projects"
+    "demo:backend": "OPENRAILS_CONFIG=config.demo.example.json cargo run --manifest-path openrails-backend/Cargo.toml --locked",
+    "test": "bun run test:sdk && cargo test --manifest-path openrails-backend/Cargo.toml --locked && cargo build --manifest-path openrails-backend/Cargo.toml --locked && node openrails-backend/tests/sdk.mjs --demo && node openrails-backend/tests/sdk.mjs --projects"
   }
 }

@@ -64,4 +64,4 @@ Collection names are single path segments. Keys and file names may contain `/`, 
 
 `npm run build`, `npm run typecheck` and `npm test` also work inside this directory after dependencies have been installed. There is no bundler or runtime dependency. The published package includes generated runtime/declarations plus the TypeScript source for debugging.
 
-Tests cover typed collection usage, invalid type rejection, URL construction, error details, SQL result metadata, NDJSON source cleanup, tool validation, execution limits and cancellation. The repository's `tests/sdk.mjs` additionally exercises this built package against a real Rust server.
+Tests cover typed collection usage, invalid type rejection, URL construction, error details, SQL result metadata, NDJSON source cleanup, tool validation, execution limits and cancellation. The repository's `openrails-backend/tests/sdk.mjs` additionally exercises this built package against a real Rust server.

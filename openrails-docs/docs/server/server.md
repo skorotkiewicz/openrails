@@ -6,7 +6,7 @@ Requires Rust 1.88+ and a C compiler. Run from the OpenRails repository root:
 
 ```sh
 export OPENRAILS_TOKEN="$(openssl rand -hex 32)"
-cargo run --release --locked
+cargo run --manifest-path openrails-backend/Cargo.toml --release --locked
 ```
 
 The server listens on `http://127.0.0.1:8787`. `GET /health` is public. Protected endpoints require `Authorization: Bearer <project-key>`.
@@ -38,7 +38,7 @@ Each project has its own key, database, files and integrations. Save this as the
 ```sh
 export APP_API_KEY="$(openssl rand -hex 32)"
 export OPENRAILS_CONFIG=config.json
-cargo run --release --locked
+cargo run --manifest-path openrails-backend/Cargo.toml --release --locked
 ```
 
 Add entries with distinct keys. The bearer key selects the project. `OPENRAILS_TOKEN` is not a master key; only keys referenced by `api_key_env` are accepted in multi-project mode.

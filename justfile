@@ -5,25 +5,25 @@ default:
     @just --list
 
 build:
-    cargo build --release
+    cargo build --manifest-path openrails-backend/Cargo.toml --release
 
 build-all:
-    cargo build --release --all-features
+    cargo build --manifest-path openrails-backend/Cargo.toml --release --all-features
 
 run *args:
-    cargo run --all-features -- {{ args }}
+    cargo run --manifest-path openrails-backend/Cargo.toml --all-features -- {{ args }}
 
 fmt:
-    cargo fmt
-    cargo clippy --all-targets --all-features -- -D warnings
+    cargo fmt --manifest-path openrails-backend/Cargo.toml
+    cargo clippy --manifest-path openrails-backend/Cargo.toml --all-targets --all-features -- -D warnings
     @ # cargo shear --fix # cargo install shear
 
 check:
-    cargo fmt --check
-    cargo clippy --all-targets --all-features -- -D warnings
+    cargo fmt --manifest-path openrails-backend/Cargo.toml --check
+    cargo clippy --manifest-path openrails-backend/Cargo.toml --all-targets --all-features -- -D warnings
 
 test: fmt
-    cargo test --all-targets --all-features
+    cargo test --manifest-path openrails-backend/Cargo.toml --all-targets --all-features
 
 install-hook:
     @printf '#!/bin/sh\nset -e\njust check\n' > .git/hooks/pre-commit
@@ -35,7 +35,7 @@ remove-hook:
 add-tag:
     #!/usr/bin/env bash
     set -euo pipefail
-    VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
+    VERSION=$(grep '^version' openrails-backend/Cargo.toml | head -1 | cut -d'"' -f2)
     git push origin main
     git tag -a "v${VERSION}" -m "Release v${VERSION}"
     git push origin "v${VERSION}"

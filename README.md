@@ -5,7 +5,7 @@
 <h1 align="center">OpenRails</h1>
 
 <p align="center">
-  <a href="src/main.rs"><img src="https://img.shields.io/badge/server-Rust-ff5e00?style=flat-square&amp;logo=rust&amp;logoColor=white" alt="Server built with Rust"></a>
+  <a href="openrails-backend/src/main.rs"><img src="https://img.shields.io/badge/server-Rust-ff5e00?style=flat-square&amp;logo=rust&amp;logoColor=white" alt="Server built with Rust"></a>
   <a href="https://www.npmjs.com/package/openrails"><img src="https://img.shields.io/npm/v/openrails?style=flat-square&amp;color=ff5e00" alt="openrails npm version"></a>
   <a href="openrails-sdk/LICENSE"><img src="https://img.shields.io/badge/license-MIT-ff5e00?style=flat-square" alt="MIT license"></a>
   <a href="https://github.com/skorotkiewicz/openrails/actions/workflows/docs.yml"><img src="https://github.com/skorotkiewicz/openrails/actions/workflows/docs.yml/badge.svg" alt="Docs deployment status"></a>
@@ -15,15 +15,15 @@ OpenRails is the primary self-hosted Rust server. It stores collections and file
 
 ## Run
 
-Requires Rust 1.88+ and a C compiler for bundled SQLite.
+Requires Rust 1.88+ and a C compiler for bundled SQLite. Run these commands from the repository root to preserve relative configuration and storage paths.
 
 ```sh
 export OPENRAILS_TOKEN="$(openssl rand -hex 32)"
 export OPENRAILS_PUBLIC_URL="http://127.0.0.1:8787"
-cargo run --release --locked
+cargo run --manifest-path openrails-backend/Cargo.toml --release --locked
 
 # or
-DEMO_API_KEY="474e...572" OPENRAILS_CONFIG=config.projects.json ./target/release/openrails-backend
+DEMO_API_KEY="474e...572" OPENRAILS_CONFIG=config.projects.json ./openrails-backend/target/release/openrails-backend
 ```
 
 Point your trusted Node/Bun app at the server, using the **same token**:
@@ -70,7 +70,7 @@ export SHOP_API_KEY="$(openssl rand -hex 32)"
 export CRM_API_KEY="$(openssl rand -hex 32)"
 export DEMO_API_KEY="$(openssl rand -hex 32)"
 export OPENRAILS_CONFIG=config.json
-cargo run --release --locked
+cargo run --manifest-path openrails-backend/Cargo.toml --release --locked
 ```
 
 For the full demo, use the `projects.demo` entry from `config.demo.example.json` instead of the minimal entry below to include its local LLM, queries and connector. The demo app reads its own private `openrails-demo/config.json` with `url` and `token`; use the same server-configured `DEMO_API_KEY` value as its token, not a newly generated client key.
@@ -185,12 +185,14 @@ Existing database-stored files are exported automatically at startup; their orig
 ## Checks
 
 ```sh
-cargo fmt --check
-cargo test --locked
-cargo clippy --locked --all-targets -- -D warnings
+cargo fmt --manifest-path openrails-backend/Cargo.toml --check
+cargo test --manifest-path openrails-backend/Cargo.toml --locked
+cargo clippy --manifest-path openrails-backend/Cargo.toml --locked --all-targets -- -D warnings
 bun install --frozen-lockfile
 bun run test:sdk
-cargo build --locked && node tests/sdk.mjs && node tests/sdk.mjs --projects
+cargo build --manifest-path openrails-backend/Cargo.toml --locked
+node openrails-backend/tests/sdk.mjs --demo
+node openrails-backend/tests/sdk.mjs --projects
 ```
 
 The SDK smoke checks require Node 20+. They start a real backend and local mock integrations, exercise single-project and multi-project modes via the workspace SDK, and make no external service calls. Multi-project checks cover isolation, concurrent requests, signed-link tampering and rejected startup configurations. Tests retain isolated databases under the OS temporary directory for inspection.
