@@ -9,10 +9,10 @@ These public templates include every currently supported server JSON field. Exam
 
 ## Download
 
-- [Single-project server JSON](/examples/server.json)
-- [Multi-project server JSON](/examples/projects.json)
-- [Server environment template](/examples/server.env.example)
-- [Client JSON](/examples/client.json)
+- <a href="../examples/server.json" download>Single-project server JSON</a>
+- <a href="../examples/projects.json" download>Multi-project server JSON</a>
+- <a href="../examples/server.env.example" download>Server environment template</a>
+- <a href="../examples/client.json" download>Client JSON</a>
 
 Save one server JSON template as `config.json`, set `OPENRAILS_CONFIG=config.json`, provide its credential environment variables, and restart the server. Optional integrations can be omitted entirely. Do not merge top-level single-project fields with `projects`.
 
