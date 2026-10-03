@@ -26,7 +26,7 @@ jobs:
             target: aarch64-unknown-linux-gnu
             artifact: openrails-backend-linux-arm64
           - os: macos-15-intel
-            target: macos-latest
+            target: x86_64-apple-darwin
             artifact: openrails-backend-macos-amd64
           - os: macos-latest
             target: aarch64-apple-darwin
