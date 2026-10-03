@@ -24,7 +24,7 @@ Set `RESEND_API_KEY` on the server, load the file with `OPENRAILS_CONFIG` and re
 
 ## SDK
 
-After [configuring the client](/sdk), call this only when you intend to send real email:
+After [configuring the client](/sdk/index), call this only when you intend to send real email:
 
 ```ts
 import { email } from '@openrails/sdk';

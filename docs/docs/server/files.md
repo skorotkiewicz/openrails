@@ -9,7 +9,7 @@ File contents live on disk; names, sizes, content types and timestamps live in y
 
 ## SDK
 
-After [configuring the client](/sdk):
+After [configuring the client](/sdk/index):
 
 ```ts
 import { files } from '@openrails/sdk';

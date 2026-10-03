@@ -1,4 +1,4 @@
 [
-  { "text": "Server", "link": "/server" },
-  { "text": "SDK", "link": "/sdk" }
+  { "text": "Server", "link": "/server/index" },
+  { "text": "SDK", "link": "/sdk/index" }
 ]

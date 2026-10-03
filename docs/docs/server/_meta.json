@@ -1,6 +1,7 @@
 [
   "index",
   "server",
+  "configuration",
   "kv",
   "files",
   "sql",

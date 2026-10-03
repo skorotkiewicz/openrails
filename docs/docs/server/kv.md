@@ -5,7 +5,7 @@ description: Store JSON records and query them with the SDK or HTTP API.
 
 # KV collections
 
-Collections store JSON values by key in your project's SQLite database. No extra server configuration is needed. SDK examples assume [the client is configured](/sdk).
+Collections store JSON values by key in your project's SQLite database. No extra server configuration is needed. SDK examples assume [the client is configured](/sdk/index).
 
 ## SDK
 

@@ -1,0 +1,57 @@
+{
+  "projects": {
+    "app": {
+      "api_key_env": "APP_API_KEY",
+      "config": {
+        "users": [
+          {
+            "uuid": "owner",
+            "name": "Owner",
+            "email": "owner@example.com",
+            "is_admin": true
+          }
+        ],
+        "queries": {
+          "task_by_key": {
+            "description": "Read a task from this project",
+            "sql": "SELECT key, json_extract(value, '$.title') AS title FROM kv WHERE scope = '' AND collection = 'tasks' AND key = $1",
+            "params": [
+              {
+                "name": "key",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "llm": {
+          "base_url": "http://127.0.0.1:8888/v1",
+          "api_key_env": "LLM_API_KEY",
+          "model": "REPLACE_WITH_YOUR_MODEL_ID",
+          "provider": "local"
+        },
+        "email": {
+          "api_key_env": "RESEND_API_KEY",
+          "from": "OpenRails <notifications@example.com>",
+          "url": "https://api.resend.com/emails"
+        },
+        "service_connectors": {
+          "models": {
+            "base_url": "http://127.0.0.1:8888",
+            "description": "Model discovery",
+            "allowed_methods": [
+              "GET"
+            ],
+            "bearer_token_env": "MODEL_SERVICE_TOKEN",
+            "api_docs_link": "https://REPLACE_WITH_YOUR_SERVICE_DOCS_URL",
+            "usage_instructions": "GET /v1/models to list available models.",
+            "content_type": "application/json"
+          }
+        }
+      }
+    },
+    "crm": {
+      "api_key_env": "CRM_API_KEY",
+      "config": {}
+    }
+  }
+}

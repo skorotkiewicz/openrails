@@ -47,6 +47,8 @@ Storage defaults to `.openrails/projects/<id>/`. IDs allow 1–64 lowercase ASCI
 
 ## Optional configuration
 
+See [Example configurations](./configuration) for downloadable templates covering every supported field and environment setting.
+
 These fields belong at the top level in single-project mode, or inside each project's `config`:
 
 | Field | Purpose |

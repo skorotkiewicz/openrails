@@ -26,7 +26,7 @@ configure({
 });
 ```
 
-Use the server origin, not `/fn/data`. Alternatively, the SDK reads `OPENRAILS_URL` and `OPENRAILS_TOKEN` from the client process. In multi-project mode, that client token must be the selected project's key.
+Use the server origin, not `/fn/data`. See [Example configurations](/server/configuration) for the private client JSON format and complete server templates. Alternatively, the SDK reads `OPENRAILS_URL` and `OPENRAILS_TOKEN` from the client process. In multi-project mode, that client token must be the selected project's key.
 
 Configuration is process-global. Do not switch it per concurrent request to access different projects; use explicit bearer keys with direct HTTP requests instead.
 

@@ -9,7 +9,7 @@ SQL reads the same SQLite database used by collections and file metadata. There 
 
 ## SDK
 
-After [configuring the client](/sdk):
+After [configuring the client](/sdk/index):
 
 ```ts
 import { data, dataConnectors } from '@openrails/sdk';

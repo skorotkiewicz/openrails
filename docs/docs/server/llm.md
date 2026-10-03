@@ -25,7 +25,7 @@ Put `llm` inside the project's `config` in multi-project mode. Load the file wit
 
 ## SDK
 
-After [configuring the client](/sdk):
+After [configuring the client](/sdk/index):
 
 ```ts
 import { llm, llmProviders } from '@openrails/sdk';
