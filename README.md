@@ -54,6 +54,13 @@ Build the local SDK first with `bun install && bun run build:sdk`. You can use `
 
 The [browser demo](openrails-demo/README.md) is a client of your running OpenRails server, keeping the project key out of the browser. It includes collection/query controls, file uploads/downloads, the project's configured LLM, tool loops, and explicit unsupported-API errors. Configure its client URL and existing project key as described in its README.
 
+<details>
+ <summary>View the OpenRails SDK demo screenshot</summary>
+
+ ![OpenRails SDK demo workbench](.github/assets/OpenRails-SDK-demo.png)
+
+</details>
+
 ## Multiple projects
 
 One process can serve multiple projects on the same URL. Copy `config.projects.example.json` to `config.json` and start it with distinct keys:
