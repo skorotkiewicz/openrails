@@ -1,8 +1,19 @@
 {
-  "name": "@openrails/sdk",
+  "name": "openrails",
   "version": "0.1.0",
   "description": "Typed server-side client for the self-hosted OpenRails backend",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/skorotkiewicz/openrails.git",
+    "directory": "openrails-sdk"
+  },
+  "homepage": "https://github.com/skorotkiewicz/openrails/tree/main/openrails-sdk#readme",
+  "bugs": "https://github.com/skorotkiewicz/openrails/issues",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -12,12 +23,13 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "src", "README.md"],
+  "files": ["dist", "src", "README.md", "LICENSE"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.test.json",
     "test": "npm run build && npm run typecheck && node --test tests/*.mjs",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "prepublishOnly": "npm test"
   },
   "engines": {"node": ">=20"},
   "devDependencies": {"typescript": "^5.7.0"}

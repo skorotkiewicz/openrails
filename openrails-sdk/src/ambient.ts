@@ -24,7 +24,7 @@ export function ambient(): ClientOptions {
   if (!configured) {
     const env = environment();
     if (!env.OPENRAILS_TOKEN || !env.OPENRAILS_URL) {
-      throw new Error('Configure @openrails/sdk with configure({ url, token }) or set OPENRAILS_URL and OPENRAILS_TOKEN');
+      throw new Error('Configure openrails with configure({ url, token }) or set OPENRAILS_URL and OPENRAILS_TOKEN');
     }
     configure({ url: env.OPENRAILS_URL, token: env.OPENRAILS_TOKEN });
   }

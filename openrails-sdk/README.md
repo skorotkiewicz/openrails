@@ -1,8 +1,16 @@
-# @openrails/sdk
+# openrails
 
 Typed, server-side client for the primary self-hosted OpenRails server. The runtime and public types are maintained in `src/*.ts`. `tsc` produces ESM JavaScript, declarations and source maps in `dist/`.
 
-## Build and use
+## Install
+
+```sh
+npm install openrails
+```
+
+Requires Node 20+ or Bun. Use ESM imports in a trusted server application.
+
+## Build from source
 
 From the repository root:
 
@@ -13,7 +21,7 @@ bun run test:sdk
 ```
 
 ```ts
-import { configure, db, files, data } from '@openrails/sdk';
+import { configure, db, files, data } from 'openrails';
 
 configure({ url: 'http://127.0.0.1:8787', token: 'your-server-token' });
 

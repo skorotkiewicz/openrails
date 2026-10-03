@@ -1,0 +1,7 @@
+.npmrc*
+.env*
+*.tgz
+node_modules/
+legacy-dist/
+tests/
+tsconfig*.json
