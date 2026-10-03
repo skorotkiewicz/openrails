@@ -1,0 +1,11 @@
+[
+  "index",
+  "server",
+  "kv",
+  "files",
+  "sql",
+  "queries",
+  "llm",
+  "email",
+  { "type": "file", "name": "service-connectors", "label": "HTTP connectors" }
+]

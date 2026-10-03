@@ -1,0 +1,5 @@
+[
+  { "type": "file", "name": "index", "label": "Overview" },
+  { "type": "dir", "name": "server", "label": "API server" },
+  { "type": "dir", "name": "sdk", "label": "TypeScript SDK" }
+]

@@ -1,0 +1,105 @@
+---
+title: TypeScript SDK
+---
+
+# TypeScript SDK
+
+`@openrails/sdk` is an ESM client for Node 20+ and Bun. Use it on your application server, not in the browser.
+
+## Build and configure
+
+The OpenRails repository includes the SDK as a workspace. From the repository root:
+
+```sh
+bun install
+bun run build:sdk
+```
+
+Configure once at application startup with the existing server/project key:
+
+```ts
+import { configure, db, files, data } from '@openrails/sdk';
+
+configure({
+  url: 'http://127.0.0.1:8787',
+  token: process.env.APP_API_KEY!,
+});
+```
+
+Use the server origin, not `/fn/data`. Alternatively, the SDK reads `OPENRAILS_URL` and `OPENRAILS_TOKEN` from the client process. In multi-project mode, that client token must be the selected project's key.
+
+Configuration is process-global. Do not switch it per concurrent request to access different projects; use explicit bearer keys with direct HTTP requests instead.
+
+## Collections
+
+See [KV collections](/server/kv) for filtering, HTTP requests and limits.
+
+```ts
+const tasks = db.collection<{ title: string; done: boolean }>('tasks');
+
+await tasks.put('first', { title: 'Ship it', done: false });
+const task = await tasks.get('first'); // Value or null
+const pending = await tasks.where('done', 'eq', false)
+  .orderBy('title').page(1, 20); // Records with key, value and updated_at
+await tasks.delete('first');
+```
+
+Queries also support `prefix()`, `updatedSince()`, `updatedBefore()`, `first()` and `count()`. Operators: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `in`. Pages start at 1; sizes default to 100 and cap at 1000.
+
+Collection names are single path segments. Keys and file names may include `/`, spaces and Unicode; avoid `.` and `..` segments.
+
+## Files
+
+See [Files](/server/files) for uploads, downloads, signed links and HTTP endpoints.
+
+```ts
+await files.put('notes.txt', 'Hello');
+const response = await files.get('notes.txt'); // Response or null
+const text = await response?.text();
+const { url } = await files.url('notes.txt'); // Signed 15-minute link
+```
+
+`put()` also accepts binary data, blobs and readable streams. Use `list()`, `urls(names)` and `delete(name)` for metadata, batch links and deletion. Downloads stream from disk; uploads are limited to 16 MiB.
+
+## SQL
+
+See [SQL](/server/sql) for the database schema, HTTP requests and query limits.
+
+```ts
+const rows = await data.runSQL(
+  "SELECT key FROM kv WHERE scope = '' AND collection = $1",
+  ['tasks'],
+);
+```
+
+Rows are objects with `columns`, `rowcount` and `truncated` metadata on the result array. SQL reads your project's own SQLite database, not an external provider.
+
+## Saved queries
+
+```ts
+import { query, savedQueries } from '@openrails/sdk';
+
+const available = await savedQueries();
+const rows = await query('demo_task', { key: 'first' });
+```
+
+The query must be configured on the server. See [Saved queries](/server/queries) for configuration, parameters and HTTP usage.
+
+## Other APIs
+
+| API | Purpose |
+| --- | --- |
+| `llm.generate(input, options)` | [LLM setup and usage](/server/llm): text, JSON and executable SDK tool loops |
+| `llm.stream()`, `llm.streamRaw()` | NDJSON; server currently buffers each completion |
+| `llmProviders()` | Configured providers and models |
+| `email.send({ to, subject, text })` | [Email setup and sending](/server/email); accepted is not a delivery guarantee |
+| `connector(name).fetch(path, options)` | Call a [configured HTTP service](/server/service-connectors); supports response `text()` and `json()` |
+| `serviceConnectors()`, `serviceConnectorDocs(name)` | Connector discovery and documentation |
+| `appUsers()` | Static roster, not user authentication |
+| `db.scoped()`, `db.scopedRole()` | Read-only scopes; empty until populated offline |
+| `dataConnectors()` | The local SQLite `default` connection |
+| `ctx`, `secrets` | Standalone context (`user: null`) and client-process environment |
+
+LLM, email and connectors must be configured on the server. Agent execution and connector tool calls currently return `501`.
+
+Failed requests throw `ApiError` with `status`, `message` and parsed `detail`. Tool loops may throw `LlmRunError`. `errorFrame()` and `toNdjson()` help return structured errors and streams from your app.
