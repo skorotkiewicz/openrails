@@ -21,6 +21,9 @@ Requires Rust 1.88+ and a C compiler for bundled SQLite.
 export OPENRAILS_TOKEN="$(openssl rand -hex 32)"
 export OPENRAILS_PUBLIC_URL="http://127.0.0.1:8787"
 cargo run --release --locked
+
+# or
+DEMO_API_KEY="474e...572" OPENRAILS_CONFIG=config.projects.json ./target/release/openrails-backend
 ```
 
 Point your trusted Node/Bun app at the server, using the **same token**:
