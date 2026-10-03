@@ -3,6 +3,7 @@ import { defineConfig } from '@rspress/core';
 
 export default defineConfig({
   root: path.join(__dirname, 'docs'),
+  base: process.env.DOCS_BASE || '/',
   lang: 'en',
   title: 'OpenRails',
   description: 'Self-hosted API server and TypeScript SDK.',
