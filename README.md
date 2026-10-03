@@ -1,4 +1,15 @@
-# OpenRails
+<p align="center">
+  <img src=".github/assets/openrails.svg" alt="OpenRails rail logo" width="128" height="128">
+</p>
+
+<h1 align="center">OpenRails</h1>
+
+<p align="center">
+  <a href="src/main.rs"><img src="https://img.shields.io/badge/server-Rust-ff5e00?style=flat-square&amp;logo=rust&amp;logoColor=white" alt="Server built with Rust"></a>
+  <a href="https://www.npmjs.com/package/openrails"><img src="https://img.shields.io/npm/v/openrails?style=flat-square&amp;color=ff5e00" alt="openrails npm version"></a>
+  <a href="openrails-sdk/LICENSE"><img src="https://img.shields.io/badge/license-MIT-ff5e00?style=flat-square" alt="MIT license"></a>
+  <a href="https://github.com/skorotkiewicz/openrails/actions/workflows/docs.yml"><img src="https://github.com/skorotkiewicz/openrails/actions/workflows/docs.yml/badge.svg" alt="Docs deployment status"></a>
+</p>
 
 OpenRails is the primary self-hosted Rust server. It stores collections and file metadata in SQLite, and file contents on disk under `.openrails/files/`. No external database provider or object store is required. The `openrails` package lives in `openrails-sdk/`, with editable TypeScript source, generated declarations and an ESM build.
 

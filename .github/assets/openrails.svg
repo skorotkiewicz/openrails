@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">OpenRails</title>
+  <desc id="desc">Two open railway tracks leading forward inside an orange rounded square.</desc>
+  <rect x="8" y="8" width="144" height="144" rx="40" fill="#ff5e00"/>
+  <path d="M62 61h36M56 82h48M48 105h64" stroke="#ffd9c2" stroke-width="8" stroke-linecap="round"/>
+  <path d="M46 120 71 40M114 120 89 40" stroke="#fff" stroke-width="10" stroke-linecap="round"/>
+</svg>
