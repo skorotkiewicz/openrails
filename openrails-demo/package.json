@@ -9,7 +9,7 @@
     "check": "node --check server.mjs && node --check client.js"
   },
   "dependencies": {
-    "@openrails/sdk": "../openrails-sdk"
+    "openrails": "../openrails-sdk"
   },
   "engines": {
     "node": ">=20"

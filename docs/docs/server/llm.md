@@ -28,7 +28,7 @@ Put `llm` inside the project's `config` in multi-project mode. Load the file wit
 After [configuring the client](/sdk/index):
 
 ```ts
-import { llm, llmProviders } from '@openrails/sdk';
+import { llm, llmProviders } from 'openrails';
 
 const configured = await llmProviders();
 const result = await llm.generate('Say hello in one sentence.', {

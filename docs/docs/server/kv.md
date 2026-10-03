@@ -10,7 +10,7 @@ Collections store JSON values by key in your project's SQLite database. No extra
 ## SDK
 
 ```ts
-import { db } from '@openrails/sdk';
+import { db } from 'openrails';
 
 const tasks = db.collection<{ title: string; done: boolean }>('tasks');
 await tasks.put('first', { title: 'Ship it', done: false });

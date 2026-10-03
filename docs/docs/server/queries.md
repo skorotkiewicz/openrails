@@ -30,7 +30,7 @@ Load the file with `OPENRAILS_CONFIG` and restart the server. This is server con
 After configuring the SDK with your server URL and existing project key:
 
 ```ts
-import { db, query, savedQueries } from '@openrails/sdk';
+import { db, query, savedQueries } from 'openrails';
 
 await db.collection('demo_tasks').put('first', { title: 'My task' });
 

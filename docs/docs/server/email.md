@@ -27,7 +27,7 @@ Set `RESEND_API_KEY` on the server, load the file with `OPENRAILS_CONFIG` and re
 After [configuring the client](/sdk/index), call this only when you intend to send real email:
 
 ```ts
-import { email } from '@openrails/sdk';
+import { email } from 'openrails';
 
 const result = await email.send({
   to: process.env.EMAIL_TO!,

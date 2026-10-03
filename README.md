@@ -1,6 +1,6 @@
 # OpenRails
 
-OpenRails is the primary self-hosted Rust server. It stores collections and file metadata in SQLite, and file contents on disk under `.openrails/files/`. No external database provider or object store is required. The `@openrails/sdk` package lives in `openrails-sdk/`, with editable TypeScript source, generated declarations and an ESM build.
+OpenRails is the primary self-hosted Rust server. It stores collections and file metadata in SQLite, and file contents on disk under `.openrails/files/`. No external database provider or object store is required. The `openrails` package lives in `openrails-sdk/`, with editable TypeScript source, generated declarations and an ESM build.
 
 ## Run
 
@@ -20,7 +20,7 @@ export OPENRAILS_URL="http://127.0.0.1:8787"
 ```
 
 ```js
-import { configure, db, files } from '@openrails/sdk';
+import { configure, db, files } from 'openrails';
 
 configure({ url: 'http://127.0.0.1:8787', token: process.env.OPENRAILS_TOKEN });
 

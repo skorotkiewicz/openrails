@@ -6,7 +6,7 @@ import {
   configure, db, appUsers, files, data, dataConnectors, query, savedQueries,
   llm, llmProviders, email, connector, serviceConnectors, serviceConnectorDocs,
   agents, ctx, secrets, ApiError, LlmRunError, errorFrame, toNdjson,
-} from '@openrails/sdk';
+} from 'openrails';
 
 let clientConfig;
 try {

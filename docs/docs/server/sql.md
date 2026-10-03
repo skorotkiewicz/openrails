@@ -12,7 +12,7 @@ SQL reads the same SQLite database used by collections and file metadata. There 
 After [configuring the client](/sdk/index):
 
 ```ts
-import { data, dataConnectors } from '@openrails/sdk';
+import { data, dataConnectors } from 'openrails';
 
 const rows = await data.runSQL(
   "SELECT key, json_extract(value, '$.title') AS title FROM kv WHERE scope = '' AND collection = $1",

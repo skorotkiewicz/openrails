@@ -41,7 +41,7 @@ In multi-project mode, put `service_connectors` inside the project's `config`. L
 After configuring the SDK with the existing project key:
 
 ```ts
-import { connector, serviceConnectors, serviceConnectorDocs } from '@openrails/sdk';
+import { connector, serviceConnectors, serviceConnectorDocs } from 'openrails';
 
 const available = await serviceConnectors();
 const docs = await serviceConnectorDocs('models');

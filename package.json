@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "workspaces": ["openrails-sdk"],
-  "dependencies": {"@openrails/sdk": "workspace:*"},
+  "dependencies": {"openrails": "workspace:*"},
   "scripts": {
     "build:sdk": "bun run --cwd openrails-sdk build",
     "test:sdk": "bun run --cwd openrails-sdk test",

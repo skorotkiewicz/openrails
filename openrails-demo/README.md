@@ -1,6 +1,6 @@
 # OpenRails SDK demo
 
-A small browser workbench using `@openrails/sdk` on a Node HTTP server. Plain HTML, CSS and JavaScript, no runtime dependencies beyond the SDK. Node 20+ and an already-running OpenRails server are required. The demo listens only on `127.0.0.1:3000`; it is not a production app or a user-login system.
+A small browser workbench using `openrails` on a Node HTTP server. Plain HTML, CSS and JavaScript, no runtime dependencies beyond the SDK. Node 20+ and an already-running OpenRails server are required. The demo listens only on `127.0.0.1:3000`; it is not a production app or a user-login system.
 
 ## Client configuration
 
@@ -14,7 +14,7 @@ cp -n config.example.json config.json
 chmod 600 config.json
 ```
 
-This directory includes its own `package.json` and a bundled `@openrails/sdk` npm archive. Installation does not require parent directories, server sources, or an SDK build. `npm install` also works.
+This directory includes its own `package.json` and a bundled `openrails` npm archive. Installation does not require parent directories, server sources, or an SDK build. `npm install` also works.
 
 Edit the client file, using your actual server URL and the exact project key already registered on that server:
 

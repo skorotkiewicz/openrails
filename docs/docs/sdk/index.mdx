@@ -4,7 +4,7 @@ title: TypeScript SDK
 
 # TypeScript SDK
 
-`@openrails/sdk` is an ESM client for Node 20+ and Bun. Use it on your application server, not in the browser.
+`openrails` is an ESM client for Node 20+ and Bun. Use it on your application server, not in the browser.
 
 ## Build and configure
 
@@ -18,7 +18,7 @@ bun run build:sdk
 Configure once at application startup with the existing server/project key:
 
 ```ts
-import { configure, db, files, data } from '@openrails/sdk';
+import { configure, db, files, data } from 'openrails';
 
 configure({
   url: 'http://127.0.0.1:8787',
@@ -77,7 +77,7 @@ Rows are objects with `columns`, `rowcount` and `truncated` metadata on the resu
 ## Saved queries
 
 ```ts
-import { query, savedQueries } from '@openrails/sdk';
+import { query, savedQueries } from 'openrails';
 
 const available = await savedQueries();
 const rows = await query('demo_task', { key: 'first' });

@@ -12,7 +12,7 @@ File contents live on disk; names, sizes, content types and timestamps live in y
 After [configuring the client](/sdk/index):
 
 ```ts
-import { files } from '@openrails/sdk';
+import { files } from 'openrails';
 
 const metadata = await files.put('notes/hello.txt', 'Hello');
 const response = await files.get('notes/hello.txt'); // Response or null

@@ -104,7 +104,7 @@ try {
     await delay(50);
   }
   assert(ready, logs || 'Backend did not start');
-  const { db, files, appUsers, data, dataConnectors, query, savedQueries, llm, llmProviders, email, connector, serviceConnectors, serviceConnectorDocs, agents, ApiError, ctx, secrets, configure } = await import('@openrails/sdk');
+  const { db, files, appUsers, data, dataConnectors, query, savedQueries, llm, llmProviders, email, connector, serviceConnectors, serviceConnectorDocs, agents, ApiError, ctx, secrets, configure } = await import('openrails');
   assert.throws(() => configure({ url: 'file:///tmp/backend', token }), TypeError);
   configure({ url, token });
   const tasks = db.collection('tasks');
@@ -216,9 +216,9 @@ try {
   assert.equal(ctx.user, null); // Static service token, not a fabricated user identity.
   assert.equal(ctx.trigger, 'http');
   assert.equal(ctx.invocationId, 'local');
-  assert.equal('bigquery' in await import('@openrails/sdk'), false);
-  assert.equal('turso' in await import('@openrails/sdk'), false);
-  assert.equal('postgres' in await import('@openrails/sdk'), false);
+  assert.equal('bigquery' in await import('openrails'), false);
+  assert.equal('turso' in await import('openrails'), false);
+  assert.equal('postgres' in await import('openrails'), false);
   // A failed SQL query must not disable primary KV writes.
   await tasks.put('after-sql', { score: 4 });
   assert.equal((await tasks.get('after-sql')).score, 4);
