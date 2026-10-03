@@ -1,7 +1,7 @@
-/target
-/config.json
-/config.projects.json
-/openrails-demo/config.json
-/.env
-/.openrails/
+target
+config.json
+config.projects.json
+openrails-demo/config.json
+.env
+.openrails/
 node_modules/
