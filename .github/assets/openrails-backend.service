@@ -1,0 +1,35 @@
+# Install the executable at /usr/local/bin/openrails-backend.
+# Create /etc/openrails/openrails.env, owned by root with mode 0600.
+# Single project: set OPENRAILS_TOKEN. Multiple projects: set OPENRAILS_CONFIG
+# and the project-key variables named in that config. Keep JSON in /etc/openrails,
+# readable by the service; credentials belong only in the environment file.
+
+[Unit]
+Description=OpenRails Rust server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+StateDirectory=openrails
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/openrails
+Environment=OPENRAILS_BIND=127.0.0.1:8787
+Environment=OPENRAILS_PUBLIC_URL=http://127.0.0.1:8787
+Environment=OPENRAILS_DB_PATH=/var/lib/openrails/backend.sqlite3
+Environment=OPENRAILS_FILES_DIR=/var/lib/openrails/files
+Environment=OPENRAILS_PROJECTS_DIR=/var/lib/openrails/projects
+EnvironmentFile=/etc/openrails/openrails.env
+ExecStart=/usr/local/bin/openrails-backend
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
