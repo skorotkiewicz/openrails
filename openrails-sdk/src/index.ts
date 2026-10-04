@@ -1,7 +1,7 @@
 export { configure, type ClientOptions } from './ambient.js';
 export { agents } from './agents.js';
 export { ctx } from './ctx.js';
-export { db, Collection, DbQuery, type FrozenScope } from './db.js';
+export { db, Collection, DbQuery, type FrozenScope, type AtomicRequest } from './db.js';
 export { appUsers } from './directory.js';
 export { email } from './email.js';
 export { files, type FileData } from './files.js';

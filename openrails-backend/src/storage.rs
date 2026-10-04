@@ -118,9 +118,12 @@ pub fn handle(
     headers: &HeaderMap,
     body: Bytes,
 ) -> ApiResult<Response> {
-    let db = app.db.lock().map_err(internal)?;
+    let mut db = app.db.lock().map_err(internal)?;
+    if path == "kv/transaction" && method == Method::POST {
+        return atomic(app, &mut db, &body);
+    }
     if path == "files" || path.starts_with("files/") {
-        return files(app, &db, method, path, query, headers, &body);
+        return files(app, &mut db, method, path, query, headers, &body);
     }
     let (scope, rest, frozen) = if let Some(rest) = path.strip_prefix("kv-scoped/") {
         let mut parts = rest.splitn(3, '/');
@@ -196,6 +199,138 @@ pub fn handle(
             "Collection listing requires GET".into(),
         ))
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Check {
+    collection: String,
+    key: String,
+    exists: bool,
+    #[serde(default)]
+    value: Value,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Put {
+    collection: String,
+    key: String,
+    value: Value,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Delete {
+    collection: String,
+    key: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Attachment {
+    name: String,
+    content_type: String,
+    data: String,
+}
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Atomic {
+    #[serde(default)]
+    checks: Vec<Check>,
+    #[serde(default)]
+    puts: Vec<Put>,
+    #[serde(default)]
+    deletes: Vec<Delete>,
+    attachment: Option<Attachment>,
+}
+
+fn assert_checks(db: &Connection, checks: &[Check]) -> ApiResult<()> {
+    for check in checks {
+        let actual: Option<String> = db
+            .query_row(
+                "SELECT value FROM kv WHERE scope='' AND collection=?1 AND key=?2",
+                params![check.collection, check.key],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(internal)?;
+        let matches = match actual {
+            None => !check.exists,
+            Some(value) => {
+                check.exists
+                    && serde_json::from_str::<Value>(&value).map_err(internal)? == check.value
+            }
+        };
+        if !matches {
+            return Err(ApiError(
+                StatusCode::CONFLICT,
+                "Atomic precondition failed".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn atomic(app: &App, db: &mut Connection, body: &[u8]) -> ApiResult<Response> {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let request: Atomic =
+        serde_json::from_slice(body).map_err(|_| bad("Invalid atomic request"))?;
+    if request.checks.len() > 256 || request.puts.len() + request.deletes.len() > 256 {
+        return Err(bad("At most 256 checks and mutations per transaction"));
+    }
+    for (collection, key) in request
+        .checks
+        .iter()
+        .map(|v| (&v.collection, &v.key))
+        .chain(request.puts.iter().map(|v| (&v.collection, &v.key)))
+        .chain(request.deletes.iter().map(|v| (&v.collection, &v.key)))
+    {
+        name_valid(collection)?;
+        name_valid(key)?;
+        if collection.contains('/') {
+            return Err(bad("Collections must be one segment"));
+        }
+    }
+    let attachment = request
+        .attachment
+        .as_ref()
+        .map(|file| -> ApiResult<Vec<u8>> {
+            name_valid(&file.name)?;
+            if file.content_type.is_empty()
+                || file.content_type.len() > 255
+                || file.content_type.chars().any(char::is_control)
+            {
+                return Err(bad("Invalid attachment Content-Type"));
+            }
+            STANDARD
+                .decode(&file.data)
+                .map_err(|_| bad("Attachment must be base64"))
+        })
+        .transpose()?;
+    // BEGIN IMMEDIATE also serializes independent server connections/processes to this project DB.
+    let tx = db
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(internal)?;
+    assert_checks(&tx, &request.checks)?;
+    let updated = now()?;
+    for put in &request.puts {
+        tx.execute("INSERT INTO kv(scope,collection,key,value,updated_at) VALUES('',?1,?2,?3,?4)
+            ON CONFLICT(scope,collection,key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
+            params![put.collection, put.key, put.value.to_string(), updated]).map_err(internal)?;
+    }
+    for delete in &request.deletes {
+        tx.execute(
+            "DELETE FROM kv WHERE scope='' AND collection=?1 AND key=?2",
+            params![delete.collection, delete.key],
+        )
+        .map_err(internal)?;
+    }
+    if let (Some(file), Some(bytes)) = (&request.attachment, attachment) {
+        let key = write_blob(&tx, &app.files_dir, &bytes).map_err(internal)?;
+        tx.execute("INSERT INTO files(name,content_type,storage_key,size,updated_at) VALUES(?1,?2,?3,?4,?5)
+            ON CONFLICT(name) DO UPDATE SET content_type=excluded.content_type,storage_key=excluded.storage_key,size=excluded.size,updated_at=excluded.updated_at",
+            params![file.name,file.content_type,key,bytes.len() as u64,updated]).map_err(internal)?;
+    }
+    tx.commit().map_err(internal)?;
+    Ok(response(json!({"committed":true})))
 }
 
 #[derive(serde::Serialize)]
@@ -402,6 +537,66 @@ fn list(db: &Connection, scope: &str, collection: &str, query: &Params) -> ApiRe
     Ok(response(json!({"items":items})))
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Gc {
+    confirm: bool,
+    dry_run: bool,
+    #[serde(default)]
+    checks: Vec<Check>,
+}
+fn gc(app: &App, db: &mut Connection, body: &[u8]) -> ApiResult<Response> {
+    let request: Gc = serde_json::from_slice(body).map_err(|_| bad("Invalid cleanup request"))?;
+    if !request.confirm || request.checks.len() > 256 {
+        return Err(bad("Explicit cleanup confirmation required"));
+    }
+    let tx = db
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(internal)?;
+    assert_checks(&tx, &request.checks)?;
+    let live = {
+        let mut statement = tx
+            .prepare("SELECT storage_key FROM files")
+            .map_err(internal)?;
+        statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(internal)?
+            .collect::<Result<HashSet<_>, _>>()
+            .map_err(internal)?
+    };
+    let mut count = 0;
+    let mut bytes = 0;
+    for entry in fs::read_dir(&app.files_dir).map_err(internal)? {
+        let entry = entry.map_err(internal)?;
+        let filename = entry.file_name();
+        let Some(name) = filename.to_str() else {
+            continue;
+        };
+        let Some(key) = name
+            .strip_suffix(".blob")
+            .or_else(|| name.strip_suffix(".tmp"))
+        else {
+            continue;
+        };
+        if key.len() != 64
+            || !key.bytes().all(|b| b.is_ascii_hexdigit())
+            || live.contains(key)
+            || !entry.file_type().map_err(internal)?.is_file()
+        {
+            continue;
+        }
+        bytes += entry.metadata().map_err(internal)?.len();
+        count += 1;
+        if !request.dry_run {
+            fs::remove_file(entry.path()).map_err(internal)?;
+        }
+    }
+    tx.commit().map_err(internal)?;
+    Ok(response(
+        json!({"files":count,"bytes":bytes,"dry_run":request.dry_run}),
+    ))
+}
+
 fn metadata(db: &Connection, name: &str) -> ApiResult<Option<Value>> {
     db.query_row("SELECT content_type,size,updated_at FROM files WHERE name=?1", [name], |row| {
         Ok(json!({"name":name,"content_type":row.get::<_,String>(0)?,"size":row.get::<_,u64>(1)?,"updated_at":row.get::<_,String>(2)?}))
@@ -410,7 +605,7 @@ fn metadata(db: &Connection, name: &str) -> ApiResult<Option<Value>> {
 
 fn files(
     app: &App,
-    db: &Connection,
+    db: &mut Connection,
     method: &Method,
     path: &str,
     query: &Params,
@@ -436,12 +631,18 @@ fn files(
             if content_type.len() > 255 {
                 return Err(bad("Content-Type is too long"));
             }
-            let key = write_blob(db, &app.files_dir, body).map_err(internal)?;
-            db.execute("INSERT INTO files(name,content_type,storage_key,size,updated_at) VALUES(?1,?2,?3,?4,?5)
+            let tx = db
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .map_err(internal)?;
+            let key = write_blob(&tx, &app.files_dir, body).map_err(internal)?;
+            tx.execute("INSERT INTO files(name,content_type,storage_key,size,updated_at) VALUES(?1,?2,?3,?4,?5)
                 ON CONFLICT(name) DO UPDATE SET content_type=excluded.content_type,storage_key=excluded.storage_key,size=excluded.size,updated_at=excluded.updated_at",
                 params![name,content_type,key,body.len() as u64,now()?]).map_err(internal)?;
-            Ok(response(metadata(db, name)?.ok_or_else(missing)?))
+            let result = metadata(&tx, name)?.ok_or_else(missing)?;
+            tx.commit().map_err(internal)?;
+            Ok(response(result))
         }
+        ("POST", "files/gc") => gc(app, db, body),
         ("POST", "files/url" | "files/urls") => {
             let body = parse_json(body)?;
             if path == "files/url" {

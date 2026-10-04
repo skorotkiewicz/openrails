@@ -55,7 +55,17 @@ class FrozenCollection<T> {
   }
 }
 export interface FrozenScope { collection<T = unknown>(name: string): FrozenCollection<T>; }
+export interface AtomicRequest {
+  checks?: Array<{ collection: string; key: string; exists: boolean; value?: unknown }>;
+  puts?: Array<{ collection: string; key: string; value: unknown }>;
+  deletes?: Array<{ collection: string; key: string }>;
+  /** A base64-encoded file committed with the KV mutations. */
+  attachment?: { name: string; content_type: string; data: string };
+}
 export const db = {
+  transaction(request: AtomicRequest): Promise<{ committed: true }> {
+    return call('POST', '/kv/transaction', { body: request });
+  },
   collection<T = unknown>(name: string): Collection<T> { return new Collection<T>(name); },
   scoped(owner: string): FrozenScope { return { collection: <T = unknown>(name: string) => new FrozenCollection<T>('user', owner, name) }; },
   scopedRole(owner: string): FrozenScope { return { collection: <T = unknown>(name: string) => new FrozenCollection<T>('role', owner, name) }; },

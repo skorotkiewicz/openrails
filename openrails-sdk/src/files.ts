@@ -20,6 +20,7 @@ async function get(name: string): Promise<Response | null> {
   return response;
 }
 export const files = {
+  gc(options: { confirm: true; dry_run: boolean; checks?: import('./db.js').AtomicRequest['checks'] }): Promise<{ files: number; bytes: number; dry_run: boolean }> { return call('POST', '/files/gc', { body: options }); },
   put, get,
   url(name: string): Promise<FileResolvedUrl> { encPath(name); return call('POST', '/files/url', { body: { name } }); },
   urls(names: string[]): Promise<FileUrlBatch> { names.forEach(encPath); return call('POST', '/files/urls', { body: { names } }); },

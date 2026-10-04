@@ -725,3 +725,100 @@ fn project_identifiers_keys_and_signatures_are_safe() {
         crm.signature("same.txt", 123)
     );
 }
+
+#[tokio::test]
+async fn atomic_conditions_file_coupling_and_independent_connections() {
+    let path = temp_path("atomic");
+    let first = router(app(&path));
+    let second = router(app(&path));
+    let body = json!({"checks":[{"collection":"names","key":"alice","exists":false}],
+        "puts":[{"collection":"names","key":"alice","value":{"owner":"one"}},
+                {"collection":"posts","key":"one","value":{"image":"one.txt"}}],
+        "attachment":{"name":"one.txt","content_type":"text/plain","data":"aGVsbG8="}})
+    .to_string();
+    let (left, right) = tokio::join!(
+        request(&first, "POST", "/fn/data/kv/transaction", &body, true),
+        request(&second, "POST", "/fn/data/kv/transaction", &body, true)
+    );
+    let statuses = [left.status(), right.status()];
+    assert!(statuses.contains(&StatusCode::OK));
+    assert!(statuses.contains(&StatusCode::CONFLICT));
+    assert_eq!(
+        request(&first, "GET", "/fn/data/files/one.txt", "", true)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let stale = json!({"checks":[{"collection":"names","key":"alice","exists":true,"value":{"owner":"wrong"}}],
+        "puts":[{"collection":"posts","key":"bad","value":1}],
+        "attachment":{"name":"bad.txt","content_type":"text/plain","data":"aGVsbG8="}}).to_string();
+    assert_eq!(
+        request(&first, "POST", "/fn/data/kv/transaction", &stale, true)
+            .await
+            .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        request(&first, "GET", "/fn/data/kv/posts/bad", "", true)
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        request(&first, "GET", "/fn/data/files/bad.txt", "", true)
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        request(&first, "POST", "/fn/data/kv/transaction", &body, false)
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        request(
+            &first,
+            "POST",
+            "/fn/data/kv-scoped/user/member/transaction",
+            &body,
+            true
+        )
+        .await
+        .status(),
+        StatusCode::METHOD_NOT_ALLOWED
+    );
+    // Existing JSON null is different from an absent record.
+    request(
+        &first,
+        "PUT",
+        "/fn/data/kv/nulls/key",
+        r#"{"value":null}"#,
+        true,
+    )
+    .await;
+    assert_eq!(
+        request(
+            &first,
+            "POST",
+            "/fn/data/kv/transaction",
+            r#"{"checks":[{"collection":"nulls","key":"key","exists":false}]}"#,
+            true
+        )
+        .await
+        .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        request(
+            &first,
+            "POST",
+            "/fn/data/kv/transaction",
+            r#"{"checks":[{"collection":"nulls","key":"key","exists":true,"value":null}]}"#,
+            true
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+}
