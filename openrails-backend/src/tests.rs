@@ -822,3 +822,83 @@ async fn atomic_conditions_file_coupling_and_independent_connections() {
         StatusCode::OK
     );
 }
+
+#[tokio::test]
+async fn explicit_gc_preserves_referenced_files_and_rejects_revoked_guards() {
+    let state = app(":memory:");
+    let directory = state.files_dir.clone();
+    let routes = router(state);
+    assert_eq!(
+        request(
+            &routes,
+            "PUT",
+            "/fn/data/files/blob?name=retained",
+            "hello",
+            true
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    let orphan = directory.join(format!("{}.blob", "a".repeat(64)));
+    std::fs::write(&orphan, b"unused").unwrap();
+    std::fs::write(directory.join("notes.txt"), b"not a server blob").unwrap();
+    let dry = r#"{"confirm":true,"dry_run":true}"#;
+    assert_eq!(
+        request(&routes, "POST", "/fn/data/files/gc", dry, false)
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        request(
+            &routes,
+            "POST",
+            "/fn/data/files/gc",
+            r#"{"confirm":false,"dry_run":false}"#,
+            true
+        )
+        .await
+        .status(),
+        StatusCode::BAD_REQUEST
+    );
+    let result = json_body(request(&routes, "POST", "/fn/data/files/gc", dry, true).await).await;
+    assert_eq!(result["files"], 1);
+    assert!(orphan.exists());
+    request(
+        &routes,
+        "PUT",
+        "/fn/data/kv/admin/session",
+        r#"{"value":{"revoked":true}}"#,
+        true,
+    )
+    .await;
+    let guard = r#"{"confirm":true,"dry_run":false,"checks":[{"collection":"admin","key":"session","exists":true,"value":{"revoked":false}}]}"#;
+    assert_eq!(
+        request(&routes, "POST", "/fn/data/files/gc", guard, true)
+            .await
+            .status(),
+        StatusCode::CONFLICT
+    );
+    assert!(orphan.exists());
+    let result = json_body(
+        request(
+            &routes,
+            "POST",
+            "/fn/data/files/gc",
+            r#"{"confirm":true,"dry_run":false}"#,
+            true,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(result["files"], 1);
+    assert!(!orphan.exists());
+    assert!(directory.join("notes.txt").exists());
+    assert_eq!(
+        request(&routes, "GET", "/fn/data/files/retained", "", true)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+}

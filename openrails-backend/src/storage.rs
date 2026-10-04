@@ -244,6 +244,11 @@ struct Atomic {
 
 fn assert_checks(db: &Connection, checks: &[Check]) -> ApiResult<()> {
     for check in checks {
+        name_valid(&check.collection)?;
+        name_valid(&check.key)?;
+        if check.collection.contains('/') {
+            return Err(bad("Collections must be one segment"));
+        }
         let actual: Option<String> = db
             .query_row(
                 "SELECT value FROM kv WHERE scope='' AND collection=?1 AND key=?2",
@@ -566,6 +571,7 @@ fn gc(app: &App, db: &mut Connection, body: &[u8]) -> ApiResult<Response> {
     };
     let mut count = 0;
     let mut bytes = 0;
+    // ponytail: GC holds the project writer lock during the scan; schedule it off-peak if file counts make pauses noticeable.
     for entry in fs::read_dir(&app.files_dir).map_err(internal)? {
         let entry = entry.map_err(internal)?;
         let filename = entry.file_name();
