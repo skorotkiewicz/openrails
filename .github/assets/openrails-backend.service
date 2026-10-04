@@ -3,6 +3,7 @@
 # Single project: set OPENRAILS_TOKEN. Multiple projects: set OPENRAILS_CONFIG
 # and the project-key variables named in that config. Keep JSON in /etc/openrails,
 # readable by the service; credentials belong only in the environment file.
+# /usr/lib/systemd/system/openrails.service
 
 [Unit]
 Description=OpenRails Rust server
